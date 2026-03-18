@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>拼豆图纸生成器</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+            color: #333;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 30px 20px;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        h1 { font-size: 1.8em; font-weight: 600; color: #222; }
+        .subtitle { color: #888; font-size: 0.9em; margin-top: 6px; }
+
+        .upload-area {
+            background: #fff;
+            border: 2px dashed #ccc;
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.2s, background 0.2s;
+            margin-bottom: 20px;
+        }
+        .upload-area:hover, .upload-area.dragover {
+            border-color: #666;
+            background: #fafafa;
+        }
+        .upload-area .icon { font-size: 3em; margin-bottom: 10px; }
+        .upload-area p { color: #888; }
+        .upload-area input { display: none; }
+
+        .controls {
+            background: #fff;
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid #e0e0e0;
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            align-items: center;
+        }
+        .control-group { display: flex; align-items: center; gap: 8px; }
+        .control-group label { font-size: 0.9em; color: #555; white-space: nowrap; }
+        .control-group input[type="number"] {
+            width: 70px;
+            padding: 6px 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 0.9em;
+        }
+        .btn {
+            padding: 8px 24px;
+            background: #333;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background 0.2s;
+        }
+        .btn:hover { background: #555; }
+        .btn:disabled { background: #aaa; cursor: not-allowed; }
+        .btn-outline {
+            background: #fff;
+            color: #333;
+            border: 1px solid #ccc;
+        }
+        .btn-outline:hover { background: #f0f0f0; }
+
+        .preview-row {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .preview-box {
+            background: #fff;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+            padding: 16px;
+            flex: 1;
+            min-width: 200px;
+        }
+        .preview-box h3 {
+            font-size: 0.95em;
+            color: #555;
+            margin-bottom: 12px;
+        }
+        .preview-box img {
+            max-width: 100%;
+            max-height: 300px;
+            display: block;
+            margin: 0 auto;
+            border-radius: 4px;
+        }
+
+        .pattern-container {
+            background: #fff;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+            padding: 20px;
+            overflow-x: auto;
+            margin-bottom: 20px;
+        }
+        .pattern-container h3 {
+            font-size: 0.95em;
+            color: #555;
+            margin-bottom: 12px;
+        }
+        #patternCanvas {
+            display: block;
+            margin: 0 auto;
+            image-rendering: pixelated;
+        }
+
+        .color-list {
+            background: #fff;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+            padding: 20px;
+        }
+        .color-list h3 {
+            font-size: 0.95em;
+            color: #555;
+            margin-bottom: 12px;
+        }
+        .color-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .color-table th, .color-table td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+            font-size: 0.85em;
+        }
+        .color-table th { color: #888; font-weight: 500; }
+        .color-swatch {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: inline-block;
+            border: 1px solid #ddd;
+            vertical-align: middle;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #888;
+        }
+        .loading .spinner {
+            display: inline-block;
+            width: 30px;
+            height: 30px;
+            border: 3px solid #eee;
+            border-top-color: #333;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .hidden { display: none; }
+
+        .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+
+        @media (max-width: 600px) {
+            h1 { font-size: 1.4em; }
+            .upload-area { padding: 24px; }
+            .controls { flex-direction: column; }
+            .preview-row { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>拼豆图纸生成器</h1>
+            <p class="subtitle">上传图片，自动生成拼豆手工图纸</p>
+        </header>
+
+        <div class="upload-area" id="uploadArea">
+            <div class="icon">📷</div>
+            <p>点击或拖拽上传图片</p>
+            <p style="font-size:0.8em; color:#aaa; margin-top:6px;">支持 JPG / PNG / GIF / WebP</p>
+            <input type="file" id="fileInput" accept="image/*">
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <label>宽度 (颗):</label>
+                <input type="number" id="widthInput" value="29" min="5" max="100">
+            </div>
+            <div class="control-group">
+                <label>高度 (颗):</label>
+                <input type="number" id="heightInput" value="29" min="5" max="100">
+            </div>
+            <div class="control-group">
+                <input type="checkbox" id="lockRatio" checked>
+                <label for="lockRatio">锁定比例</label>
+            </div>
+            <button class="btn" id="generateBtn" disabled>生成图纸</button>
+        </div>
+
+        <div class="preview-row hidden" id="previewRow">
+            <div class="preview-box">
+                <h3>原图预览</h3>
+                <img id="previewImg" alt="预览">
+            </div>
+        </div>
+
+        <div class="loading hidden" id="loading">
+            <div class="spinner"></div>
+            <p style="margin-top:12px;">正在生成拼豆图纸...</p>
+        </div>
+
+        <div class="hidden" id="resultSection">
+            <div class="pattern-container">
+                <h3>拼豆图纸</h3>
+                <div style="display:flex; gap:10px; margin-bottom:12px; align-items:center;">
+                    <div class="control-group">
+                        <label>显示:</label>
+                        <select id="displayMode" style="padding:4px 8px; border:1px solid #ddd; border-radius:4px; font-size:0.85em;">
+                            <option value="beads">圆形珠子</option>
+                            <option value="grid">方格</option>
+                            <option value="numbered">编号</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <input type="checkbox" id="showGridLines" checked>
+                        <label for="showGridLines">网格线</label>
+                    </div>
+                </div>
+                <canvas id="patternCanvas"></canvas>
+                <div class="actions">
+                    <button class="btn" id="downloadBtn">下载图纸 (PNG)</button>
+                    <button class="btn btn-outline" id="downloadPdfBtn">下载 PDF</button>
+                </div>
+            </div>
+
+            <div class="color-list">
+                <h3>用色统计</h3>
+                <table class="color-table">
+                    <thead><tr><th>颜色</th><th>名称</th><th>数量</th><th>占比</th></tr></thead>
+                    <tbody id="colorTableBody"></tbody>
+                </table>
+                <p id="totalBeads" style="margin-top:12px; font-size:0.85em; color:#888;"></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+    const generateBtn = document.getElementById('generateBtn');
+    const widthInput = document.getElementById('widthInput');
+    const heightInput = document.getElementById('heightInput');
+    const lockRatio = document.getElementById('lockRatio');
+    const previewRow = document.getElementById('previewRow');
+    const previewImg = document.getElementById('previewImg');
+    const loading = document.getElementById('loading');
+    const resultSection = document.getElementById('resultSection');
+    const patternCanvas = document.getElementById('patternCanvas');
+    const colorTableBody = document.getElementById('colorTableBody');
+    const totalBeads = document.getElementById('totalBeads');
+    const displayMode = document.getElementById('displayMode');
+    const showGridLines = document.getElementById('showGridLines');
+
+    let currentFile = null;
+    let currentPattern = null;
+    let imageAspectRatio = 1;
+
+    uploadArea.addEventListener('click', () => fileInput.click());
+    uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+    uploadArea.addEventListener('drop', e => {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+        if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+
+    function handleFile(file) {
+        if (!file.type.startsWith('image/')) return;
+        currentFile = file;
+        const url = URL.createObjectURL(file);
+        previewImg.src = url;
+        previewRow.classList.remove('hidden');
+        generateBtn.disabled = false;
+        uploadArea.querySelector('p').textContent = file.name;
+
+        const img = new Image();
+        img.onload = () => {
+            imageAspectRatio = img.width / img.height;
+            if (lockRatio.checked) {
+                heightInput.value = Math.round(parseInt(widthInput.value) / imageAspectRatio);
+            }
+        };
+        img.src = url;
+    }
+
+    widthInput.addEventListener('input', () => {
+        if (lockRatio.checked && currentFile) {
+            heightInput.value = Math.max(5, Math.round(parseInt(widthInput.value) / imageAspectRatio));
+        }
+    });
+    heightInput.addEventListener('input', () => {
+        if (lockRatio.checked && currentFile) {
+            widthInput.value = Math.max(5, Math.round(parseInt(heightInput.value) * imageAspectRatio));
+        }
+    });
+
+    generateBtn.addEventListener('click', generate);
+    displayMode.addEventListener('change', () => { if (currentPattern) drawPattern(currentPattern); });
+    showGridLines.addEventListener('change', () => { if (currentPattern) drawPattern(currentPattern); });
+
+    async function generate() {
+        if (!currentFile) return;
+        loading.classList.remove('hidden');
+        resultSection.classList.add('hidden');
+        generateBtn.disabled = true;
+
+        const fd = new FormData();
+        fd.append('image', currentFile);
+        fd.append('width', widthInput.value);
+        fd.append('height', heightInput.value);
+
+        try {
+            const res = await fetch('/api/generate', { method: 'POST', body: fd });
+            const data = await res.json();
+            if (data.error) { alert(data.error); return; }
+            currentPattern = data;
+            drawPattern(data);
+            renderColorTable(data);
+            resultSection.classList.remove('hidden');
+        } catch (e) {
+            alert('生成失败: ' + e.message);
+        } finally {
+            loading.classList.add('hidden');
+            generateBtn.disabled = false;
+        }
+    }
+
+    function drawPattern(data) {
+        const mode = displayMode.value;
+        const grid = showGridLines.checked;
+        const cellSize = Math.max(16, Math.min(32, Math.floor(800 / Math.max(data.width, data.height))));
+        const w = data.width * cellSize;
+        const h = data.height * cellSize;
+        patternCanvas.width = w;
+        patternCanvas.height = h;
+        const ctx = patternCanvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, w, h);
+
+        // Build color-to-index map for numbered mode
+        const colorIndexMap = {};
+        data.colors.forEach((c, i) => { colorIndexMap[c.name] = i + 1; });
+
+        for (let y = 0; y < data.height; y++) {
+            for (let x = 0; x < data.width; x++) {
+                const bead = data.pattern[y][x];
+                const px = x * cellSize;
+                const py = y * cellSize;
+
+                if (mode === 'beads') {
+                    // White background first
+                    ctx.fillStyle = '#f8f8f8';
+                    ctx.fillRect(px, py, cellSize, cellSize);
+                    // Draw circle
+                    ctx.fillStyle = bead.color;
+                    ctx.beginPath();
+                    ctx.arc(px + cellSize / 2, py + cellSize / 2, cellSize * 0.4, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+                    ctx.lineWidth = 0.5;
+                    ctx.stroke();
+                } else if (mode === 'grid') {
+                    ctx.fillStyle = bead.color;
+                    ctx.fillRect(px, py, cellSize, cellSize);
+                } else if (mode === 'numbered') {
+                    ctx.fillStyle = bead.color;
+                    ctx.fillRect(px, py, cellSize, cellSize);
+                    // Draw number
+                    const num = colorIndexMap[bead.name] || 0;
+                    const rgb = hexToRgb(bead.color);
+                    const brightness = (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000;
+                    ctx.fillStyle = brightness > 128 ? '#000' : '#fff';
+                    ctx.font = `bold ${Math.floor(cellSize * 0.5)}px sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(num, px + cellSize / 2, py + cellSize / 2);
+                }
+
+                if (grid) {
+                    ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+                    ctx.lineWidth = 0.5;
+                    ctx.strokeRect(px, py, cellSize, cellSize);
+                }
+            }
+        }
+
+        // Draw heavier lines every 5 cells for counting
+        if (grid) {
+            ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+            ctx.lineWidth = 1;
+            for (let x = 0; x <= data.width; x += 5) {
+                ctx.beginPath();
+                ctx.moveTo(x * cellSize, 0);
+                ctx.lineTo(x * cellSize, h);
+                ctx.stroke();
+            }
+            for (let y = 0; y <= data.height; y += 5) {
+                ctx.beginPath();
+                ctx.moveTo(0, y * cellSize);
+                ctx.lineTo(w, y * cellSize);
+                ctx.stroke();
+            }
+        }
+    }
+
+    function hexToRgb(hex) {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        return { r, g, b };
+    }
+
+    function renderColorTable(data) {
+        const total = data.width * data.height;
+        colorTableBody.innerHTML = data.colors.map((c, i) => `
+            <tr>
+                <td><span class="color-swatch" style="background:${c.hex}"></span></td>
+                <td>${displayMode.value === 'numbered' ? `<strong>${i+1}.</strong> ` : ''}${c.name}</td>
+                <td>${c.count}</td>
+                <td>${(c.count / total * 100).toFixed(1)}%</td>
+            </tr>
+        `).join('');
+        totalBeads.textContent = `共计 ${total} 颗拼豆，使用 ${data.colors.length} 种颜色`;
+    }
+
+    document.getElementById('downloadBtn').addEventListener('click', () => {
+        const a = document.createElement('a');
+        a.download = 'perler-bead-pattern.png';
+        a.href = patternCanvas.toDataURL('image/png');
+        a.click();
+    });
+
+    document.getElementById('downloadPdfBtn').addEventListener('click', () => {
+        // Simple print-based PDF
+        const win = window.open('', '_blank');
+        const imgData = patternCanvas.toDataURL('image/png');
+        win.document.write(`
+            <html><head><title>拼豆图纸</title>
+            <style>
+                body { margin: 20px; font-family: sans-serif; }
+                img { max-width: 100%; }
+                table { border-collapse: collapse; margin-top: 20px; }
+                th, td { padding: 6px 12px; border: 1px solid #ddd; text-align: left; font-size: 12px; }
+                .swatch { width: 14px; height: 14px; display: inline-block; border-radius: 50%; border: 1px solid #ccc; }
+                @media print { button { display: none; } }
+            </style></head><body>
+            <h2>拼豆图纸 (${currentPattern.width} x ${currentPattern.height})</h2>
+            <img src="${imgData}">
+            <h3>用色统计</h3>
+            <table><tr><th>颜色</th><th>名称</th><th>数量</th></tr>
+            ${currentPattern.colors.map((c, i) => `<tr><td><span class="swatch" style="background:${c.hex}"></span></td><td>${i+1}. ${c.name}</td><td>${c.count}</td></tr>`).join('')}
+            </table>
+            <p>共计 ${currentPattern.width * currentPattern.height} 颗拼豆</p>
+            <button onclick="window.print()">打印/保存PDF</button>
+            </body></html>
+        `);
+        win.document.close();
+    });
+    </script>
+</body>
+</html>
