@@ -94,6 +94,16 @@
             color: #888;
             margin-left: auto;
         }
+        .section-header {
+            grid-column: 1 / -1;
+            font-size: 0.95em;
+            font-weight: 600;
+            color: #555;
+            padding: 12px 0 4px;
+            border-bottom: 1px solid #ddd;
+            margin-top: 8px;
+        }
+        .section-header:first-child { margin-top: 0; }
         @media (max-width: 600px) {
             h1 { font-size: 1.4em; }
             .color-grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
@@ -102,7 +112,7 @@
 </head>
 <body>
     <div class="container">
-        <a href="/" class="back-link">&larr; 返回生成器</a>
+        <a href="/" target="_blank" class="back-link">&larr; 返回生成器 (新标签)</a>
         <header>
             <h1>拼豆色号对照表</h1>
             <p class="subtitle">5 种品牌色号体系，点击色块复制色号</p>
@@ -139,6 +149,17 @@
     brandSelect.addEventListener('change', render);
     searchInput.addEventListener('input', render);
 
+    // COCO prefix -> hue group name
+    const groupNames = {
+        A: 'A - 白/米', B: 'B - 灰/黑', C: 'C - 红',
+        D: 'D - 橙/暖黄', E: 'E - 黄', F: 'F - 绿',
+        G: 'G - 青/薄荷', H: 'H - 蓝', J: 'J - 紫',
+        K: 'K - 粉/玫红', L: 'L - 荧光/透明', M: 'M - 珠光',
+        N: 'N - 夜光', S: 'S - 莫兰迪', W: 'W - 夜光特殊',
+        Y: 'Y - 莫兰迪灰', Z: 'Z - 棕/肤色',
+        G: 'G - 青绿',
+    };
+
     function render() {
         const brand = brandSelect.value;
         const query = searchInput.value.trim().toUpperCase();
@@ -149,19 +170,39 @@
                 brandKeys.some(k => c[k].toUpperCase().includes(query))
             );
         }
-        stats.textContent = `${filtered.length} / ${allColors.length} 色`;
+        // Sort by selected brand code (letter then number)
+        const sorted = [...filtered].sort((a, b) => {
+            const ca = a[brand], cb = b[brand];
+            const la = ca.replace(/[0-9]/g, ''), lb = cb.replace(/[0-9]/g, '');
+            if (la !== lb) return la.localeCompare(lb);
+            const na = parseInt(ca.replace(/[^0-9]/g, '')) || 0;
+            const nb = parseInt(cb.replace(/[^0-9]/g, '')) || 0;
+            return na - nb;
+        });
+        stats.textContent = `${sorted.length} / ${allColors.length} 色`;
         const otherBrands = brandKeys.filter(k => k !== brand);
-        colorGrid.innerHTML = filtered.map(c => {
+        let html = '';
+        let lastPrefix = '';
+        for (const c of sorted) {
+            const code = c[brand];
+            const prefix = code.replace(/[0-9]/g, '');
+            if (prefix !== lastPrefix) {
+                lastPrefix = prefix;
+                // Use COCO group name if brand is coco, otherwise just show prefix
+                const label = brand === 'coco' ? (groupNames[prefix] || prefix) : prefix;
+                html += `<div class="section-header">${label}</div>`;
+            }
             const secondaryLines = otherBrands.map(k => `${brandLabels[k]}: ${c[k]}`).join(' | ');
-            return `<div class="color-card" onclick="copyCode('${c[brand]}')" title="点击复制 ${c[brand]}">
+            html += `<div class="color-card" onclick="copyCode('${code}')" title="点击复制 ${code}">
                 <div class="color-swatch" style="background:${c.hex}"></div>
                 <div class="color-codes">
-                    <div class="color-code-primary">${c[brand]}</div>
+                    <div class="color-code-primary">${code}</div>
                     <div class="color-code-secondary">${secondaryLines}</div>
                     <div class="color-hex">${c.hex}</div>
                 </div>
             </div>`;
-        }).join('');
+        }
+        colorGrid.innerHTML = html;
     }
 
     function copyCode(code) {
