@@ -699,8 +699,11 @@
                 const oc = document.createElement('canvas');
                 oc.width = sw; oc.height = sh;
                 oc.getContext('2d').drawImage(sourceImg, sx, sy, sw, sh, 0, 0, sw, sh);
-                fileToSend = await new Promise(resolve => {
-                    oc.toBlob(blob => resolve(new File([blob], 'crop.png', { type: 'image/png' })), 'image/png');
+                fileToSend = await new Promise((resolve, reject) => {
+                    oc.toBlob(blob => {
+                        if (!blob) { reject(new Error('裁剪失败')); return; }
+                        resolve(new File([blob], 'crop.jpg', { type: 'image/jpeg' }));
+                    }, 'image/jpeg', 0.9);
                 });
             }
         }

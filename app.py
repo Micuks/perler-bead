@@ -21,20 +21,27 @@ def image_to_pattern(image_bytes, width=100, height=100, brand="mard"):
     img = img.resize((width, height), Image.LANCZOS)
     pixels = np.array(img)
 
-    brand_idx = BRANDS.get(brand, BRANDS["coco"])["index"]
+    brand_idx = BRANDS.get(brand, BRANDS["mard"])["index"]
 
+    # Vectorized nearest-color matching: (H*W, 3) vs (N, 3)
+    flat = pixels.reshape(-1, 3).astype(np.float64)  # (H*W, 3)
+    # Compute squared distances to all bead colors at once
+    # Using broadcasting: (H*W, 1, 3) - (1, N, 3) -> (H*W, N, 3) -> sum -> (H*W, N)
+    # Memory-efficient: compute in chunks if needed, but 10k x 205 is fine
+    diffs = flat[:, np.newaxis, :] - BEAD_RGB[np.newaxis, :, :]
+    distances = np.sum(diffs ** 2, axis=2)  # (H*W, N)
+    indices = np.argmin(distances, axis=1)  # (H*W,)
+
+    # Build pattern
     pattern = []
     color_counts = {}
+    idx_grid = indices.reshape(height, width)
     for y in range(height):
         row = []
         for x in range(width):
-            r, g, b = int(pixels[y, x, 0]), int(pixels[y, x, 1]), int(pixels[y, x, 2])
-            diff = BEAD_RGB - np.array([r, g, b], dtype=np.float64)
-            idx = int(np.argmin(np.sum(diff ** 2, axis=1)))
+            idx = int(idx_grid[y, x])
             entry = COLORS[idx]
-            code = entry[brand_idx]
-            hex_color = entry[0]
-            row.append({"color": hex_color, "code": code})
+            row.append({"color": entry[0], "code": entry[brand_idx]})
             color_counts[idx] = color_counts.get(idx, 0) + 1
         pattern.append(row)
 
