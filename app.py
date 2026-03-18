@@ -23,13 +23,12 @@ def image_to_pattern(image_bytes, width=100, height=100, brand="mard"):
 
     brand_idx = BRANDS.get(brand, BRANDS["mard"])["index"]
 
-    # Vectorized nearest-color matching: (H*W, 3) vs (N, 3)
+    # Vectorized nearest-color matching using expanded squared distance:
+    # ||a-b||^2 = ||a||^2 + ||b||^2 - 2*a.b
     flat = pixels.reshape(-1, 3).astype(np.float64)  # (H*W, 3)
-    # Compute squared distances to all bead colors at once
-    # Using broadcasting: (H*W, 1, 3) - (1, N, 3) -> (H*W, N, 3) -> sum -> (H*W, N)
-    # Memory-efficient: compute in chunks if needed, but 10k x 205 is fine
-    diffs = flat[:, np.newaxis, :] - BEAD_RGB[np.newaxis, :, :]
-    distances = np.sum(diffs ** 2, axis=2)  # (H*W, N)
+    pixel_sq = np.sum(flat ** 2, axis=1, keepdims=True)  # (H*W, 1)
+    bead_sq = np.sum(BEAD_RGB ** 2, axis=1, keepdims=True).T  # (1, N)
+    distances = pixel_sq + bead_sq - 2 * flat @ BEAD_RGB.T  # (H*W, N)
     indices = np.argmin(distances, axis=1)  # (H*W,)
 
     # Build pattern
