@@ -158,6 +158,46 @@
             vertical-align: middle;
         }
 
+        .crop-section {
+            background: #fff;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .crop-section h3 {
+            font-size: 0.95em;
+            color: #555;
+            margin-bottom: 8px;
+        }
+        .crop-hint {
+            font-size: 0.8em;
+            color: #999;
+            margin-bottom: 12px;
+        }
+        .crop-canvas-wrap {
+            position: relative;
+            display: inline-block;
+            cursor: crosshair;
+            max-width: 100%;
+            overflow: hidden;
+        }
+        #cropCanvas {
+            display: block;
+            max-width: 100%;
+        }
+        .crop-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 12px;
+            align-items: center;
+        }
+        .crop-info {
+            font-size: 0.8em;
+            color: #888;
+            margin-left: auto;
+        }
+
         .loading {
             text-align: center;
             padding: 40px;
@@ -216,10 +256,16 @@
             <button class="btn" id="generateBtn" disabled>生成图纸</button>
         </div>
 
-        <div class="preview-row hidden" id="previewRow">
-            <div class="preview-box">
-                <h3>原图预览</h3>
-                <img id="previewImg" alt="预览">
+        <div class="crop-section hidden" id="cropSection">
+            <h3>裁剪图片 (可选)</h3>
+            <p class="crop-hint">拖拽选择裁剪区域，或直接点击「生成图纸」使用完整图片</p>
+            <div class="crop-canvas-wrap">
+                <canvas id="cropCanvas"></canvas>
+            </div>
+            <div class="crop-actions">
+                <button class="btn" id="applyCropBtn" disabled>确认裁剪</button>
+                <button class="btn btn-outline" id="resetCropBtn" disabled>重置选区</button>
+                <span class="crop-info" id="cropInfo"></span>
             </div>
         </div>
 
@@ -270,8 +316,11 @@
     const widthInput = document.getElementById('widthInput');
     const heightInput = document.getElementById('heightInput');
     const lockRatio = document.getElementById('lockRatio');
-    const previewRow = document.getElementById('previewRow');
-    const previewImg = document.getElementById('previewImg');
+    const cropSection = document.getElementById('cropSection');
+    const cropCanvas = document.getElementById('cropCanvas');
+    const applyCropBtn = document.getElementById('applyCropBtn');
+    const resetCropBtn = document.getElementById('resetCropBtn');
+    const cropInfo = document.getElementById('cropInfo');
     const loading = document.getElementById('loading');
     const resultSection = document.getElementById('resultSection');
     const patternCanvas = document.getElementById('patternCanvas');
@@ -283,6 +332,12 @@
     let currentFile = null;
     let currentPattern = null;
     let imageAspectRatio = 1;
+    // Crop state
+    let sourceImg = null;       // original Image element
+    let cropScale = 1;          // canvas pixels / display pixels
+    let cropRect = null;        // {x, y, w, h} in source image coords
+    let dragging = false;
+    let dragStart = null;
 
     uploadArea.addEventListener('click', () => fileInput.click());
     uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
@@ -297,21 +352,190 @@
     function handleFile(file) {
         if (!file.type.startsWith('image/')) return;
         currentFile = file;
-        const url = URL.createObjectURL(file);
-        previewImg.src = url;
-        previewRow.classList.remove('hidden');
-        generateBtn.disabled = false;
-        uploadArea.querySelector('p').textContent = file.name;
+        cropRect = null;
+        applyCropBtn.disabled = true;
+        resetCropBtn.disabled = true;
+        cropInfo.textContent = '';
 
+        const url = URL.createObjectURL(file);
         const img = new Image();
         img.onload = () => {
+            sourceImg = img;
             imageAspectRatio = img.width / img.height;
             if (lockRatio.checked) {
                 heightInput.value = Math.round(parseInt(widthInput.value) / imageAspectRatio);
             }
+            initCropCanvas();
+            cropSection.classList.remove('hidden');
+            generateBtn.disabled = false;
         };
         img.src = url;
+        uploadArea.querySelector('p').textContent = file.name;
     }
+
+    /* ---- Crop canvas ---- */
+    function initCropCanvas() {
+        const maxW = Math.min(800, cropSection.clientWidth - 40);
+        const scale = Math.min(1, maxW / sourceImg.width);
+        const cw = Math.round(sourceImg.width * scale);
+        const ch = Math.round(sourceImg.height * scale);
+        cropCanvas.width = cw;
+        cropCanvas.height = ch;
+        cropScale = 1 / scale; // multiply display coords to get source coords
+        drawCropPreview();
+    }
+
+    function drawCropPreview() {
+        const ctx = cropCanvas.getContext('2d');
+        ctx.clearRect(0, 0, cropCanvas.width, cropCanvas.height);
+        ctx.drawImage(sourceImg, 0, 0, cropCanvas.width, cropCanvas.height);
+        if (cropRect) {
+            // dim outside
+            ctx.fillStyle = 'rgba(0,0,0,0.45)';
+            const s = 1 / cropScale;
+            const rx = cropRect.x * s, ry = cropRect.y * s, rw = cropRect.w * s, rh = cropRect.h * s;
+            // top
+            ctx.fillRect(0, 0, cropCanvas.width, ry);
+            // bottom
+            ctx.fillRect(0, ry + rh, cropCanvas.width, cropCanvas.height - ry - rh);
+            // left
+            ctx.fillRect(0, ry, rx, rh);
+            // right
+            ctx.fillRect(rx + rw, ry, cropCanvas.width - rx - rw, rh);
+            // border
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 3]);
+            ctx.strokeRect(rx, ry, rw, rh);
+            ctx.setLineDash([]);
+            // rule-of-thirds guides
+            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+            ctx.lineWidth = 1;
+            for (let i = 1; i <= 2; i++) {
+                ctx.beginPath();
+                ctx.moveTo(rx + rw * i / 3, ry);
+                ctx.lineTo(rx + rw * i / 3, ry + rh);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(rx, ry + rh * i / 3);
+                ctx.lineTo(rx + rw, ry + rh * i / 3);
+                ctx.stroke();
+            }
+        }
+    }
+
+    function canvasCoords(e) {
+        const rect = cropCanvas.getBoundingClientRect();
+        return {
+            x: (e.clientX - rect.left) * (cropCanvas.width / rect.width),
+            y: (e.clientY - rect.top) * (cropCanvas.height / rect.height)
+        };
+    }
+
+    cropCanvas.addEventListener('mousedown', e => {
+        dragging = true;
+        dragStart = canvasCoords(e);
+        cropRect = null;
+    });
+    cropCanvas.addEventListener('mousemove', e => {
+        if (!dragging) return;
+        const pos = canvasCoords(e);
+        const x1 = Math.min(dragStart.x, pos.x), y1 = Math.min(dragStart.y, pos.y);
+        const x2 = Math.max(dragStart.x, pos.x), y2 = Math.max(dragStart.y, pos.y);
+        // Convert to source coords
+        cropRect = {
+            x: Math.max(0, Math.round(x1 * cropScale)),
+            y: Math.max(0, Math.round(y1 * cropScale)),
+            w: Math.round((x2 - x1) * cropScale),
+            h: Math.round((y2 - y1) * cropScale)
+        };
+        cropRect.w = Math.min(cropRect.w, sourceImg.width - cropRect.x);
+        cropRect.h = Math.min(cropRect.h, sourceImg.height - cropRect.y);
+        drawCropPreview();
+        updateCropInfo();
+    });
+    cropCanvas.addEventListener('mouseup', () => {
+        dragging = false;
+        if (cropRect && cropRect.w > 5 && cropRect.h > 5) {
+            applyCropBtn.disabled = false;
+            resetCropBtn.disabled = false;
+        }
+    });
+
+    // Touch support
+    cropCanvas.addEventListener('touchstart', e => {
+        e.preventDefault();
+        const t = e.touches[0];
+        dragging = true;
+        dragStart = canvasCoords(t);
+        cropRect = null;
+    }, { passive: false });
+    cropCanvas.addEventListener('touchmove', e => {
+        e.preventDefault();
+        if (!dragging) return;
+        const t = e.touches[0];
+        const pos = canvasCoords(t);
+        const x1 = Math.min(dragStart.x, pos.x), y1 = Math.min(dragStart.y, pos.y);
+        const x2 = Math.max(dragStart.x, pos.x), y2 = Math.max(dragStart.y, pos.y);
+        cropRect = {
+            x: Math.max(0, Math.round(x1 * cropScale)),
+            y: Math.max(0, Math.round(y1 * cropScale)),
+            w: Math.round((x2 - x1) * cropScale),
+            h: Math.round((y2 - y1) * cropScale)
+        };
+        cropRect.w = Math.min(cropRect.w, sourceImg.width - cropRect.x);
+        cropRect.h = Math.min(cropRect.h, sourceImg.height - cropRect.y);
+        drawCropPreview();
+        updateCropInfo();
+    }, { passive: false });
+    cropCanvas.addEventListener('touchend', () => {
+        dragging = false;
+        if (cropRect && cropRect.w > 5 && cropRect.h > 5) {
+            applyCropBtn.disabled = false;
+            resetCropBtn.disabled = false;
+        }
+    });
+
+    function updateCropInfo() {
+        if (!cropRect) { cropInfo.textContent = ''; return; }
+        cropInfo.textContent = `选区: ${cropRect.w} x ${cropRect.h} px`;
+    }
+
+    applyCropBtn.addEventListener('click', () => {
+        if (!cropRect || !sourceImg) return;
+        // Crop via offscreen canvas and update currentFile as a blob
+        const oc = document.createElement('canvas');
+        oc.width = cropRect.w;
+        oc.height = cropRect.h;
+        oc.getContext('2d').drawImage(sourceImg, cropRect.x, cropRect.y, cropRect.w, cropRect.h, 0, 0, cropRect.w, cropRect.h);
+        oc.toBlob(blob => {
+            currentFile = new File([blob], 'cropped.png', { type: 'image/png' });
+            // Reload crop canvas with cropped image
+            const url = URL.createObjectURL(blob);
+            const img = new Image();
+            img.onload = () => {
+                sourceImg = img;
+                imageAspectRatio = img.width / img.height;
+                if (lockRatio.checked) {
+                    heightInput.value = Math.round(parseInt(widthInput.value) / imageAspectRatio);
+                }
+                cropRect = null;
+                applyCropBtn.disabled = true;
+                resetCropBtn.disabled = true;
+                cropInfo.textContent = '已裁剪';
+                initCropCanvas();
+            };
+            img.src = url;
+        }, 'image/png');
+    });
+
+    resetCropBtn.addEventListener('click', () => {
+        cropRect = null;
+        applyCropBtn.disabled = true;
+        resetCropBtn.disabled = true;
+        cropInfo.textContent = '';
+        drawCropPreview();
+    });
 
     widthInput.addEventListener('input', () => {
         if (lockRatio.checked && currentFile) {
