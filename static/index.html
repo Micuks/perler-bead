@@ -317,7 +317,7 @@
     <div class="container">
         <header>
             <h1>拼豆图纸生成器</h1>
-            <p class="subtitle">上传图片，自动生成拼豆手工图纸 · <a href="/colors" target="_blank" style="color:#888;">色号对照表</a></p>
+            <p class="subtitle">CIEDE2000 感知色彩匹配 · 支持抖动算法 · <a href="/colors" target="_blank" style="color:#888;">色号对照表</a></p>
         </header>
 
         <div class="upload-area" id="uploadArea">
@@ -345,6 +345,14 @@
             <div class="control-group">
                 <label>高度 (颗):</label>
                 <input type="number" id="heightInput" value="100" min="5" max="200">
+            </div>
+            <div class="control-group">
+                <label>抖动算法:</label>
+                <select id="ditherSelect" style="padding:6px 10px; border:1px solid #ddd; border-radius:6px; font-size:0.9em;">
+                    <option value="none">无抖动</option>
+                    <option value="floyd-steinberg" selected>Floyd-Steinberg</option>
+                    <option value="ordered">有序抖动 (Bayer)</option>
+                </select>
             </div>
             <div class="control-group">
                 <input type="checkbox" id="lockRatio" checked>
@@ -713,9 +721,14 @@
         fd.append('width', widthInput.value);
         fd.append('height', heightInput.value);
         fd.append('brand', document.getElementById('brandSelect').value);
+        fd.append('dither', document.getElementById('ditherSelect').value);
 
         try {
             const res = await fetch('/api/generate', { method: 'POST', body: fd });
+            if (!res.ok) {
+                const text = await res.text();
+                alert('服务器错误 (' + res.status + ')'); return;
+            }
             const data = await res.json();
             if (data.error) { alert(data.error); return; }
             currentPattern = data;

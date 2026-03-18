@@ -1,40 +1,156 @@
 #!/usr/bin/env python3
-"""Perler bead pattern generator - upload an image, get a bead pattern."""
+"""Perler bead pattern generator with CIEDE2000 color matching and dithering."""
 
 import io
+import time
 from flask import Flask, request, jsonify, send_from_directory
-from PIL import Image
+from PIL import Image, ImageFilter
 import numpy as np
+from skimage.color import rgb2lab, deltaE_ciede2000
 from colors import BRANDS, COLORS, COLOR_RGB
 
 app = Flask(__name__, static_folder="static")
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10MB
 
-BEAD_RGB = np.array(COLOR_RGB, dtype=np.float64)
+# --- Precompute CIEDE2000 lookup table at startup ---
+# Quantize RGB to 32 levels per channel -> 32^3 = 32768 entries
+LUT_BITS = 5  # 2^5 = 32 levels
+LUT_SIZE = 1 << LUT_BITS  # 32
+LUT_SHIFT = 8 - LUT_BITS  # 3
+
+# Bead colors in LAB space
+BEAD_RGB_NP = np.array(COLOR_RGB, dtype=np.float64)
+_bead_rgb_01 = BEAD_RGB_NP / 255.0
+_bead_lab = rgb2lab(_bead_rgb_01.reshape(1, -1, 3)).reshape(-1, 3)
+
+print(f"Building CIEDE2000 LUT ({LUT_SIZE}^3 = {LUT_SIZE**3} entries)...")
+t0 = time.time()
+
+# Generate all quantized RGB values
+_r = np.arange(LUT_SIZE) * (255 / (LUT_SIZE - 1))
+_grid = np.stack(np.meshgrid(_r, _r, _r, indexing='ij'), axis=-1).reshape(-1, 3)
+_grid_01 = _grid / 255.0
+_grid_lab = rgb2lab(_grid_01.reshape(1, -1, 3)).reshape(-1, 3)
+
+# Compute CIEDE2000 distance from each LUT entry to each bead color
+# Process in chunks to manage memory
+N_BEADS = len(COLORS)
+N_LUT = len(_grid_lab)
+CIEDE2000_LUT = np.empty(N_LUT, dtype=np.int16)
+
+CHUNK = 1024
+for i in range(0, N_LUT, CHUNK):
+    end = min(i + CHUNK, N_LUT)
+    chunk_lab = _grid_lab[i:end]  # (chunk, 3)
+    dists = np.empty((end - i, N_BEADS), dtype=np.float64)
+    for j in range(N_BEADS):
+        # Broadcast bead_lab[j] to match chunk shape
+        bead_tile = np.tile(_bead_lab[j], (end - i, 1))  # (chunk, 3)
+        dists[:, j] = deltaE_ciede2000(chunk_lab, bead_tile, channel_axis=-1)
+    CIEDE2000_LUT[i:end] = np.argmin(dists, axis=1).astype(np.int16)
+
+print(f"LUT built in {time.time() - t0:.1f}s")
+
+# Also keep a simple RGB fallback for speed
+BEAD_RGB_FOR_MATMUL = BEAD_RGB_NP.copy()
+_bead_sq = np.sum(BEAD_RGB_FOR_MATMUL ** 2, axis=1, keepdims=True).T  # (1, N)
 
 
-def image_to_pattern(image_bytes, width=100, height=100, brand="mard"):
+def _lut_lookup(r, g, b):
+    """Look up nearest bead index via precomputed CIEDE2000 LUT."""
+    ri = int(r) >> LUT_SHIFT
+    gi = int(g) >> LUT_SHIFT
+    bi = int(b) >> LUT_SHIFT
+    return int(CIEDE2000_LUT[ri * LUT_SIZE * LUT_SIZE + gi * LUT_SIZE + bi])
+
+
+def _lut_lookup_vectorized(pixels_flat):
+    """Vectorized LUT lookup for (N,3) uint8 array."""
+    quantized = pixels_flat.astype(np.int32) >> LUT_SHIFT
+    lut_indices = quantized[:, 0] * LUT_SIZE * LUT_SIZE + quantized[:, 1] * LUT_SIZE + quantized[:, 2]
+    return CIEDE2000_LUT[lut_indices]
+
+
+def _floyd_steinberg_dither(pixels, brand_idx):
+    """Floyd-Steinberg error diffusion dithering with CIEDE2000 matching."""
+    h, w = pixels.shape[:2]
+    # Work in float to accumulate error
+    buf = pixels.astype(np.float64)
+    result = np.empty((h, w), dtype=np.int32)
+
+    for y in range(h):
+        for x in range(w):
+            # Clamp current pixel
+            old = np.clip(buf[y, x], 0, 255)
+            # Find nearest bead via LUT
+            idx = _lut_lookup(old[0], old[1], old[2])
+            result[y, x] = idx
+            # Compute error
+            bead_rgb = BEAD_RGB_NP[idx]
+            err = old - bead_rgb
+            # Distribute error
+            if x + 1 < w:
+                buf[y, x + 1] += err * (7 / 16)
+            if y + 1 < h:
+                if x > 0:
+                    buf[y + 1, x - 1] += err * (3 / 16)
+                buf[y + 1, x] += err * (5 / 16)
+                if x + 1 < w:
+                    buf[y + 1, x + 1] += err * (1 / 16)
+
+    return result
+
+
+# Bayer 4x4 ordered dithering matrix
+BAYER_4 = np.array([
+    [0, 8, 2, 10],
+    [12, 4, 14, 6],
+    [3, 11, 1, 9],
+    [15, 7, 13, 5],
+], dtype=np.float64) / 16.0 - 0.5  # center around 0, range [-0.5, 0.5)
+
+# Scale factor for ordered dithering spread
+ORDERED_SPREAD = 48.0  # how much to perturb pixel values
+
+
+def _ordered_dither(pixels):
+    """Apply Bayer ordered dithering, return perturbed pixel array."""
+    h, w = pixels.shape[:2]
+    buf = pixels.astype(np.float64)
+    # Tile bayer matrix across image
+    by = np.tile(BAYER_4, (h // 4 + 1, w // 4 + 1))[:h, :w]
+    # Add threshold to all channels
+    for c in range(3):
+        buf[:, :, c] += by * ORDERED_SPREAD
+    return np.clip(buf, 0, 255).astype(np.uint8)
+
+
+def image_to_pattern(image_bytes, width=100, height=100, brand="mard", dither="none"):
     """Convert an uploaded image to a fuse bead pattern."""
     img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
     bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
     img = Image.alpha_composite(bg, img).convert("RGB")
+
+    # Mild sharpen before downscale
+    img = img.filter(ImageFilter.SHARPEN)
     img = img.resize((width, height), Image.LANCZOS)
     pixels = np.array(img)
 
     brand_idx = BRANDS.get(brand, BRANDS["mard"])["index"]
 
-    # Vectorized nearest-color matching using expanded squared distance:
-    # ||a-b||^2 = ||a||^2 + ||b||^2 - 2*a.b
-    flat = pixels.reshape(-1, 3).astype(np.float64)  # (H*W, 3)
-    pixel_sq = np.sum(flat ** 2, axis=1, keepdims=True)  # (H*W, 1)
-    bead_sq = np.sum(BEAD_RGB ** 2, axis=1, keepdims=True).T  # (1, N)
-    distances = pixel_sq + bead_sq - 2 * flat @ BEAD_RGB.T  # (H*W, N)
-    indices = np.argmin(distances, axis=1)  # (H*W,)
+    if dither == "floyd-steinberg":
+        idx_grid = _floyd_steinberg_dither(pixels, brand_idx)
+    else:
+        if dither == "ordered":
+            pixels = _ordered_dither(pixels)
+        # Vectorized CIEDE2000 LUT lookup
+        flat = pixels.reshape(-1, 3)
+        indices = _lut_lookup_vectorized(flat)
+        idx_grid = indices.reshape(height, width)
 
-    # Build pattern
+    # Build pattern JSON
     pattern = []
     color_counts = {}
-    idx_grid = indices.reshape(height, width)
     for y in range(height):
         row = []
         for x in range(width):
@@ -72,10 +188,13 @@ def generate():
     height = max(5, min(200, height))
     brand = request.form.get("brand", "mard")
     if brand not in BRANDS:
-        brand = "coco"
+        brand = "mard"
+    dither = request.form.get("dither", "none")
+    if dither not in ("none", "floyd-steinberg", "ordered"):
+        dither = "none"
 
     image_bytes = file.read()
-    result = image_to_pattern(image_bytes, width, height, brand)
+    result = image_to_pattern(image_bytes, width, height, brand, dither)
     return jsonify(result)
 
 
