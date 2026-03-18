@@ -175,17 +175,63 @@
             color: #999;
             margin-bottom: 12px;
         }
-        .crop-canvas-wrap {
+        .crop-wrap {
             position: relative;
             display: inline-block;
-            cursor: crosshair;
-            max-width: 100%;
-            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+            line-height: 0;
         }
-        #cropCanvas {
+        .crop-wrap img {
             display: block;
             max-width: 100%;
+            max-height: 70vh;
+            border-radius: 4px;
         }
+        /* Dark overlay outside crop region - 4 divs */
+        .crop-overlay {
+            position: absolute;
+            background: rgba(0,0,0,0.5);
+            pointer-events: none;
+        }
+        /* The crop box itself */
+        .crop-box {
+            position: absolute;
+            border: 2px solid #fff;
+            box-shadow: 0 0 0 9999px rgba(0,0,0,0.5);
+            cursor: move;
+        }
+        /* Rule-of-thirds lines */
+        .crop-box::before, .crop-box::after {
+            content: '';
+            position: absolute;
+            pointer-events: none;
+        }
+        .crop-thirds-h, .crop-thirds-v {
+            position: absolute;
+            pointer-events: none;
+            background: rgba(255,255,255,0.25);
+        }
+        .crop-thirds-h { left: 0; right: 0; height: 1px; }
+        .crop-thirds-v { top: 0; bottom: 0; width: 1px; }
+        /* 8 handles: 4 corners + 4 edges */
+        .crop-handle {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background: #fff;
+            border: 1.5px solid #666;
+            border-radius: 2px;
+            z-index: 2;
+        }
+        .crop-handle.tl { top: -6px; left: -6px; cursor: nw-resize; }
+        .crop-handle.tr { top: -6px; right: -6px; cursor: ne-resize; }
+        .crop-handle.bl { bottom: -6px; left: -6px; cursor: sw-resize; }
+        .crop-handle.br { bottom: -6px; right: -6px; cursor: se-resize; }
+        .crop-handle.tm { top: -6px; left: 50%; margin-left: -6px; cursor: n-resize; }
+        .crop-handle.bm { bottom: -6px; left: 50%; margin-left: -6px; cursor: s-resize; }
+        .crop-handle.ml { top: 50%; margin-top: -6px; left: -6px; cursor: w-resize; }
+        .crop-handle.mr { top: 50%; margin-top: -6px; right: -6px; cursor: e-resize; }
         .crop-actions {
             display: flex;
             gap: 10px;
@@ -258,13 +304,27 @@
 
         <div class="crop-section hidden" id="cropSection">
             <h3>裁剪图片 (可选)</h3>
-            <p class="crop-hint">拖拽选择裁剪区域，或直接点击「生成图纸」使用完整图片</p>
-            <div class="crop-canvas-wrap">
-                <canvas id="cropCanvas"></canvas>
+            <p class="crop-hint">拖拽边框或四角手柄调整裁剪区域，或直接点击「生成图纸」使用完整图片</p>
+            <div class="crop-wrap" id="cropWrap">
+                <img id="cropImg" alt="裁剪预览">
+                <div class="crop-box" id="cropBox">
+                    <div class="crop-thirds-h" style="top:33.3%"></div>
+                    <div class="crop-thirds-h" style="top:66.6%"></div>
+                    <div class="crop-thirds-v" style="left:33.3%"></div>
+                    <div class="crop-thirds-v" style="left:66.6%"></div>
+                    <div class="crop-handle tl" data-handle="tl"></div>
+                    <div class="crop-handle tr" data-handle="tr"></div>
+                    <div class="crop-handle bl" data-handle="bl"></div>
+                    <div class="crop-handle br" data-handle="br"></div>
+                    <div class="crop-handle tm" data-handle="tm"></div>
+                    <div class="crop-handle bm" data-handle="bm"></div>
+                    <div class="crop-handle ml" data-handle="ml"></div>
+                    <div class="crop-handle mr" data-handle="mr"></div>
+                </div>
             </div>
             <div class="crop-actions">
-                <button class="btn" id="applyCropBtn" disabled>确认裁剪</button>
-                <button class="btn btn-outline" id="resetCropBtn" disabled>重置选区</button>
+                <button class="btn" id="applyCropBtn">确认裁剪</button>
+                <button class="btn btn-outline" id="resetCropBtn">重置选区</button>
                 <span class="crop-info" id="cropInfo"></span>
             </div>
         </div>
@@ -317,7 +377,9 @@
     const heightInput = document.getElementById('heightInput');
     const lockRatio = document.getElementById('lockRatio');
     const cropSection = document.getElementById('cropSection');
-    const cropCanvas = document.getElementById('cropCanvas');
+    const cropWrap = document.getElementById('cropWrap');
+    const cropImg = document.getElementById('cropImg');
+    const cropBox = document.getElementById('cropBox');
     const applyCropBtn = document.getElementById('applyCropBtn');
     const resetCropBtn = document.getElementById('resetCropBtn');
     const cropInfo = document.getElementById('cropInfo');
@@ -330,14 +392,15 @@
     const showGridLines = document.getElementById('showGridLines');
 
     let currentFile = null;
+    let originalFile = null;
     let currentPattern = null;
     let imageAspectRatio = 1;
-    // Crop state
-    let sourceImg = null;       // original Image element
-    let cropScale = 1;          // canvas pixels / display pixels
-    let cropRect = null;        // {x, y, w, h} in source image coords
-    let dragging = false;
-    let dragStart = null;
+    let sourceImg = null;
+
+    // Crop box state (in display px relative to cropWrap)
+    let crop = { x: 0, y: 0, w: 0, h: 0 };
+    let dragMode = null;   // 'move' | handle name like 'tl','br','tm', etc.
+    let dragOrigin = null; // { mx, my, crop: {...} }
 
     uploadArea.addEventListener('click', () => fileInput.click());
     uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
@@ -352,11 +415,7 @@
     function handleFile(file) {
         if (!file.type.startsWith('image/')) return;
         currentFile = file;
-        cropRect = null;
-        applyCropBtn.disabled = true;
-        resetCropBtn.disabled = true;
-        cropInfo.textContent = '';
-
+        originalFile = file;
         const url = URL.createObjectURL(file);
         const img = new Image();
         img.onload = () => {
@@ -365,152 +424,134 @@
             if (lockRatio.checked) {
                 heightInput.value = Math.round(parseInt(widthInput.value) / imageAspectRatio);
             }
-            initCropCanvas();
-            cropSection.classList.remove('hidden');
-            generateBtn.disabled = false;
+            cropImg.src = url;
+            cropImg.onload = () => {
+                // Default crop = full image
+                crop = { x: 0, y: 0, w: cropImg.clientWidth, h: cropImg.clientHeight };
+                updateCropBox();
+                updateCropInfo();
+                cropSection.classList.remove('hidden');
+                generateBtn.disabled = false;
+            };
         };
         img.src = url;
         uploadArea.querySelector('p').textContent = file.name;
     }
 
-    /* ---- Crop canvas ---- */
-    function initCropCanvas() {
-        const maxW = Math.min(800, cropSection.clientWidth - 40);
-        const scale = Math.min(1, maxW / sourceImg.width);
-        const cw = Math.round(sourceImg.width * scale);
-        const ch = Math.round(sourceImg.height * scale);
-        cropCanvas.width = cw;
-        cropCanvas.height = ch;
-        cropScale = 1 / scale; // multiply display coords to get source coords
-        drawCropPreview();
+    /* ---- Crop box positioning ---- */
+    function updateCropBox() {
+        cropBox.style.left = crop.x + 'px';
+        cropBox.style.top = crop.y + 'px';
+        cropBox.style.width = crop.w + 'px';
+        cropBox.style.height = crop.h + 'px';
     }
-
-    function drawCropPreview() {
-        const ctx = cropCanvas.getContext('2d');
-        ctx.clearRect(0, 0, cropCanvas.width, cropCanvas.height);
-        ctx.drawImage(sourceImg, 0, 0, cropCanvas.width, cropCanvas.height);
-        if (cropRect) {
-            // dim outside
-            ctx.fillStyle = 'rgba(0,0,0,0.45)';
-            const s = 1 / cropScale;
-            const rx = cropRect.x * s, ry = cropRect.y * s, rw = cropRect.w * s, rh = cropRect.h * s;
-            // top
-            ctx.fillRect(0, 0, cropCanvas.width, ry);
-            // bottom
-            ctx.fillRect(0, ry + rh, cropCanvas.width, cropCanvas.height - ry - rh);
-            // left
-            ctx.fillRect(0, ry, rx, rh);
-            // right
-            ctx.fillRect(rx + rw, ry, cropCanvas.width - rx - rw, rh);
-            // border
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([6, 3]);
-            ctx.strokeRect(rx, ry, rw, rh);
-            ctx.setLineDash([]);
-            // rule-of-thirds guides
-            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-            ctx.lineWidth = 1;
-            for (let i = 1; i <= 2; i++) {
-                ctx.beginPath();
-                ctx.moveTo(rx + rw * i / 3, ry);
-                ctx.lineTo(rx + rw * i / 3, ry + rh);
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.moveTo(rx, ry + rh * i / 3);
-                ctx.lineTo(rx + rw, ry + rh * i / 3);
-                ctx.stroke();
-            }
-        }
-    }
-
-    function canvasCoords(e) {
-        const rect = cropCanvas.getBoundingClientRect();
-        return {
-            x: (e.clientX - rect.left) * (cropCanvas.width / rect.width),
-            y: (e.clientY - rect.top) * (cropCanvas.height / rect.height)
-        };
-    }
-
-    cropCanvas.addEventListener('mousedown', e => {
-        dragging = true;
-        dragStart = canvasCoords(e);
-        cropRect = null;
-    });
-    cropCanvas.addEventListener('mousemove', e => {
-        if (!dragging) return;
-        const pos = canvasCoords(e);
-        const x1 = Math.min(dragStart.x, pos.x), y1 = Math.min(dragStart.y, pos.y);
-        const x2 = Math.max(dragStart.x, pos.x), y2 = Math.max(dragStart.y, pos.y);
-        // Convert to source coords
-        cropRect = {
-            x: Math.max(0, Math.round(x1 * cropScale)),
-            y: Math.max(0, Math.round(y1 * cropScale)),
-            w: Math.round((x2 - x1) * cropScale),
-            h: Math.round((y2 - y1) * cropScale)
-        };
-        cropRect.w = Math.min(cropRect.w, sourceImg.width - cropRect.x);
-        cropRect.h = Math.min(cropRect.h, sourceImg.height - cropRect.y);
-        drawCropPreview();
-        updateCropInfo();
-    });
-    cropCanvas.addEventListener('mouseup', () => {
-        dragging = false;
-        if (cropRect && cropRect.w > 5 && cropRect.h > 5) {
-            applyCropBtn.disabled = false;
-            resetCropBtn.disabled = false;
-        }
-    });
-
-    // Touch support
-    cropCanvas.addEventListener('touchstart', e => {
-        e.preventDefault();
-        const t = e.touches[0];
-        dragging = true;
-        dragStart = canvasCoords(t);
-        cropRect = null;
-    }, { passive: false });
-    cropCanvas.addEventListener('touchmove', e => {
-        e.preventDefault();
-        if (!dragging) return;
-        const t = e.touches[0];
-        const pos = canvasCoords(t);
-        const x1 = Math.min(dragStart.x, pos.x), y1 = Math.min(dragStart.y, pos.y);
-        const x2 = Math.max(dragStart.x, pos.x), y2 = Math.max(dragStart.y, pos.y);
-        cropRect = {
-            x: Math.max(0, Math.round(x1 * cropScale)),
-            y: Math.max(0, Math.round(y1 * cropScale)),
-            w: Math.round((x2 - x1) * cropScale),
-            h: Math.round((y2 - y1) * cropScale)
-        };
-        cropRect.w = Math.min(cropRect.w, sourceImg.width - cropRect.x);
-        cropRect.h = Math.min(cropRect.h, sourceImg.height - cropRect.y);
-        drawCropPreview();
-        updateCropInfo();
-    }, { passive: false });
-    cropCanvas.addEventListener('touchend', () => {
-        dragging = false;
-        if (cropRect && cropRect.w > 5 && cropRect.h > 5) {
-            applyCropBtn.disabled = false;
-            resetCropBtn.disabled = false;
-        }
-    });
 
     function updateCropInfo() {
-        if (!cropRect) { cropInfo.textContent = ''; return; }
-        cropInfo.textContent = `选区: ${cropRect.w} x ${cropRect.h} px`;
+        const scaleX = sourceImg.naturalWidth / cropImg.clientWidth;
+        const scaleY = sourceImg.naturalHeight / cropImg.clientHeight;
+        const sw = Math.round(crop.w * scaleX);
+        const sh = Math.round(crop.h * scaleY);
+        cropInfo.textContent = `选区: ${sw} x ${sh} px`;
     }
 
+    function clampCrop() {
+        const maxW = cropImg.clientWidth;
+        const maxH = cropImg.clientHeight;
+        const minSize = 10;
+        crop.w = Math.max(minSize, crop.w);
+        crop.h = Math.max(minSize, crop.h);
+        crop.x = Math.max(0, Math.min(crop.x, maxW - crop.w));
+        crop.y = Math.max(0, Math.min(crop.y, maxH - crop.h));
+        crop.w = Math.min(crop.w, maxW - crop.x);
+        crop.h = Math.min(crop.h, maxH - crop.y);
+    }
+
+    /* ---- Drag interactions ---- */
+    function getPointer(e) {
+        const t = e.touches ? e.touches[0] : e;
+        const rect = cropWrap.getBoundingClientRect();
+        return { mx: t.clientX - rect.left, my: t.clientY - rect.top };
+    }
+
+    function onDragStart(e) {
+        e.preventDefault();
+        const handle = e.target.dataset && e.target.dataset.handle;
+        if (handle) {
+            dragMode = handle;
+        } else if (e.target === cropBox || cropBox.contains(e.target)) {
+            dragMode = 'move';
+        } else {
+            return;
+        }
+        const p = getPointer(e);
+        dragOrigin = { mx: p.mx, my: p.my, crop: { ...crop } };
+        document.addEventListener('mousemove', onDragMove);
+        document.addEventListener('mouseup', onDragEnd);
+        document.addEventListener('touchmove', onDragMove, { passive: false });
+        document.addEventListener('touchend', onDragEnd);
+    }
+
+    function onDragMove(e) {
+        e.preventDefault();
+        if (!dragOrigin) return;
+        const p = getPointer(e);
+        const dx = p.mx - dragOrigin.mx;
+        const dy = p.my - dragOrigin.my;
+        const o = dragOrigin.crop;
+        const maxW = cropImg.clientWidth;
+        const maxH = cropImg.clientHeight;
+
+        if (dragMode === 'move') {
+            crop.x = o.x + dx;
+            crop.y = o.y + dy;
+            crop.w = o.w;
+            crop.h = o.h;
+        } else {
+            // Handle resizing
+            let nx = o.x, ny = o.y, nw = o.w, nh = o.h;
+            if (dragMode.includes('l')) { nx = o.x + dx; nw = o.w - dx; }
+            if (dragMode.includes('r') || dragMode === 'mr') { nw = o.w + dx; }
+            if (dragMode.includes('t') && dragMode !== 'tr' || dragMode === 'tm') { ny = o.y + dy; nh = o.h - dy; }
+            if (dragMode === 'tl') { ny = o.y + dy; nh = o.h - dy; }
+            if (dragMode === 'tr') { nw = o.w + dx; ny = o.y + dy; nh = o.h - dy; }
+            if (dragMode.includes('b') || dragMode === 'bm') { nh = o.h + dy; }
+            // Prevent flipping
+            if (nw < 10) { nw = 10; if (dragMode.includes('l')) nx = o.x + o.w - 10; }
+            if (nh < 10) { nh = 10; if (dragMode.includes('t') || dragMode === 'tm') ny = o.y + o.h - 10; }
+            crop.x = nx; crop.y = ny; crop.w = nw; crop.h = nh;
+        }
+        clampCrop();
+        updateCropBox();
+        updateCropInfo();
+    }
+
+    function onDragEnd() {
+        dragMode = null;
+        dragOrigin = null;
+        document.removeEventListener('mousemove', onDragMove);
+        document.removeEventListener('mouseup', onDragEnd);
+        document.removeEventListener('touchmove', onDragMove);
+        document.removeEventListener('touchend', onDragEnd);
+    }
+
+    cropBox.addEventListener('mousedown', onDragStart);
+    cropBox.addEventListener('touchstart', onDragStart, { passive: false });
+
     applyCropBtn.addEventListener('click', () => {
-        if (!cropRect || !sourceImg) return;
-        // Crop via offscreen canvas and update currentFile as a blob
+        if (!sourceImg) return;
+        const scaleX = sourceImg.naturalWidth / cropImg.clientWidth;
+        const scaleY = sourceImg.naturalHeight / cropImg.clientHeight;
+        const sx = Math.round(crop.x * scaleX);
+        const sy = Math.round(crop.y * scaleY);
+        const sw = Math.round(crop.w * scaleX);
+        const sh = Math.round(crop.h * scaleY);
+        if (sw < 5 || sh < 5) return;
+
         const oc = document.createElement('canvas');
-        oc.width = cropRect.w;
-        oc.height = cropRect.h;
-        oc.getContext('2d').drawImage(sourceImg, cropRect.x, cropRect.y, cropRect.w, cropRect.h, 0, 0, cropRect.w, cropRect.h);
+        oc.width = sw; oc.height = sh;
+        oc.getContext('2d').drawImage(sourceImg, sx, sy, sw, sh, 0, 0, sw, sh);
         oc.toBlob(blob => {
             currentFile = new File([blob], 'cropped.png', { type: 'image/png' });
-            // Reload crop canvas with cropped image
             const url = URL.createObjectURL(blob);
             const img = new Image();
             img.onload = () => {
@@ -519,22 +560,36 @@
                 if (lockRatio.checked) {
                     heightInput.value = Math.round(parseInt(widthInput.value) / imageAspectRatio);
                 }
-                cropRect = null;
-                applyCropBtn.disabled = true;
-                resetCropBtn.disabled = true;
-                cropInfo.textContent = '已裁剪';
-                initCropCanvas();
+                cropImg.src = url;
+                cropImg.onload = () => {
+                    crop = { x: 0, y: 0, w: cropImg.clientWidth, h: cropImg.clientHeight };
+                    updateCropBox();
+                    cropInfo.textContent = '已裁剪';
+                };
             };
             img.src = url;
         }, 'image/png');
     });
 
     resetCropBtn.addEventListener('click', () => {
-        cropRect = null;
-        applyCropBtn.disabled = true;
-        resetCropBtn.disabled = true;
-        cropInfo.textContent = '';
-        drawCropPreview();
+        if (!originalFile) return;
+        currentFile = originalFile;
+        const url = URL.createObjectURL(originalFile);
+        const img = new Image();
+        img.onload = () => {
+            sourceImg = img;
+            imageAspectRatio = img.width / img.height;
+            if (lockRatio.checked) {
+                heightInput.value = Math.round(parseInt(widthInput.value) / imageAspectRatio);
+            }
+            cropImg.src = url;
+            cropImg.onload = () => {
+                crop = { x: 0, y: 0, w: cropImg.clientWidth, h: cropImg.clientHeight };
+                updateCropBox();
+                updateCropInfo();
+            };
+        };
+        img.src = url;
     });
 
     widthInput.addEventListener('input', () => {
@@ -558,8 +613,28 @@
         resultSection.classList.add('hidden');
         generateBtn.disabled = true;
 
+        // If crop box is not full image, crop first
+        let fileToSend = currentFile;
+        const scaleX = sourceImg.naturalWidth / cropImg.clientWidth;
+        const scaleY = sourceImg.naturalHeight / cropImg.clientHeight;
+        const sx = Math.round(crop.x * scaleX);
+        const sy = Math.round(crop.y * scaleY);
+        const sw = Math.round(crop.w * scaleX);
+        const sh = Math.round(crop.h * scaleY);
+        const fullW = sourceImg.naturalWidth;
+        const fullH = sourceImg.naturalHeight;
+        if (sx > 1 || sy > 1 || Math.abs(sw - fullW) > 2 || Math.abs(sh - fullH) > 2) {
+            // Crop on the fly
+            const oc = document.createElement('canvas');
+            oc.width = sw; oc.height = sh;
+            oc.getContext('2d').drawImage(sourceImg, sx, sy, sw, sh, 0, 0, sw, sh);
+            fileToSend = await new Promise(resolve => {
+                oc.toBlob(blob => resolve(new File([blob], 'crop.png', { type: 'image/png' })), 'image/png');
+            });
+        }
+
         const fd = new FormData();
-        fd.append('image', currentFile);
+        fd.append('image', fileToSend);
         fd.append('width', widthInput.value);
         fd.append('height', heightInput.value);
 
