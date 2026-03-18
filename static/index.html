@@ -415,11 +415,12 @@
                 </div>
                 <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-top:10px;">
                     <div class="zoom-controls">
-                        <button class="zoom-btn" id="zoomOutBtn" title="缩小">-</button>
+                        <button class="zoom-btn" id="zoomOutBtn" title="缩小 (-)">-</button>
                         <span class="zoom-label" id="zoomLabel">100%</span>
-                        <button class="zoom-btn" id="zoomInBtn" title="放大">+</button>
-                        <button class="zoom-btn" id="zoomFitBtn" title="适应窗口" style="width:auto; padding:0 8px; font-size:0.8em;">适应</button>
-                        <button class="zoom-btn" id="zoomResetBtn" title="原始大小" style="width:auto; padding:0 8px; font-size:0.8em;">1:1</button>
+                        <button class="zoom-btn" id="zoomInBtn" title="放大 (+)">+</button>
+                        <button class="zoom-btn" id="zoomFitBtn" title="适应窗口 (0)" style="width:auto; padding:0 8px; font-size:0.8em;">适应</button>
+                        <button class="zoom-btn" id="zoomResetBtn" title="原始大小 (1)" style="width:auto; padding:0 8px; font-size:0.8em;">1:1</button>
+                        <span style="font-size:0.7em; color:#aaa; margin-left:6px;">滑动平移 · Ctrl+滚轮缩放 · 快捷键 + - 0 1</span>
                     </div>
                     <div class="actions" style="margin-top:0;">
                         <button class="btn" id="downloadBtn">下载图纸 (PNG)</button>
@@ -823,7 +824,13 @@
         }
     }
 
-    /* ---- Pan & Zoom for pattern viewport ---- */
+    /* ---- Pan & Zoom for pattern viewport (Photoshop-like) ----
+     *  Scroll / trackpad swipe = PAN
+     *  Ctrl+scroll (or Cmd+scroll on Mac) = ZOOM at cursor
+     *  Pinch on trackpad/touch = ZOOM
+     *  Mouse drag = PAN
+     *  Keyboard: +/= zoom in, - zoom out, 0 fit, 1 reset to 1:1
+     */
     const viewport = document.getElementById('patternViewport');
     const zoomLabel = document.getElementById('zoomLabel');
     let vZoom = 1, vPanX = 0, vPanY = 0;
@@ -853,22 +860,37 @@
         applyTransform();
     }
 
-    // Mouse wheel zoom
+    function zoomCenter(factor) {
+        const rect = viewport.getBoundingClientRect();
+        zoomAt(rect.width / 2, rect.height / 2, factor);
+    }
+
+    // Wheel / trackpad: Ctrl/Cmd + scroll = zoom, plain scroll = pan
     viewport.addEventListener('wheel', e => {
         e.preventDefault();
-        const rect = viewport.getBoundingClientRect();
-        const cx = e.clientX - rect.left;
-        const cy = e.clientY - rect.top;
-        const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-        zoomAt(cx, cy, factor);
+        if (e.ctrlKey || e.metaKey) {
+            // Ctrl+scroll or trackpad pinch (browsers fire ctrlKey for pinch)
+            const rect = viewport.getBoundingClientRect();
+            const cx = e.clientX - rect.left;
+            const cy = e.clientY - rect.top;
+            // Trackpad pinch sends small deltaY; mouse wheel sends larger
+            const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
+            zoomAt(cx, cy, factor);
+        } else {
+            // Plain scroll/swipe = pan
+            vPanX -= e.deltaX;
+            vPanY -= e.deltaY;
+            applyTransform();
+        }
     }, { passive: false });
 
-    // Mouse drag pan
+    // Mouse drag = pan
     viewport.addEventListener('mousedown', e => {
         if (e.button !== 0) return;
         vDragging = true;
         vLastX = e.clientX;
         vLastY = e.clientY;
+        viewport.style.cursor = 'grabbing';
     });
     window.addEventListener('mousemove', e => {
         if (!vDragging) return;
@@ -878,28 +900,35 @@
         vLastY = e.clientY;
         applyTransform();
     });
-    window.addEventListener('mouseup', () => { vDragging = false; });
+    window.addEventListener('mouseup', () => {
+        vDragging = false;
+        viewport.style.cursor = '';
+    });
 
-    // Touch pan & pinch zoom
+    // Touch: single finger = pan, two fingers = pinch zoom + pan
     let vTouches = [];
     let vPinchDist = 0;
     viewport.addEventListener('touchstart', e => {
         vTouches = [...e.touches];
         if (vTouches.length === 2) {
-            vPinchDist = Math.hypot(vTouches[0].clientX - vTouches[1].clientX, vTouches[0].clientY - vTouches[1].clientY);
+            vPinchDist = Math.hypot(
+                vTouches[0].clientX - vTouches[1].clientX,
+                vTouches[0].clientY - vTouches[1].clientY
+            );
         }
     }, { passive: true });
     viewport.addEventListener('touchmove', e => {
         e.preventDefault();
         const touches = [...e.touches];
         if (touches.length === 1 && vTouches.length === 1) {
-            // Pan
             vPanX += touches[0].clientX - vTouches[0].clientX;
             vPanY += touches[0].clientY - vTouches[0].clientY;
             applyTransform();
-        } else if (touches.length === 2) {
-            // Pinch zoom
-            const dist = Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+        } else if (touches.length === 2 && vTouches.length === 2) {
+            const dist = Math.hypot(
+                touches[0].clientX - touches[1].clientX,
+                touches[0].clientY - touches[1].clientY
+            );
             if (vPinchDist > 0) {
                 const rect = viewport.getBoundingClientRect();
                 const cx = (touches[0].clientX + touches[1].clientX) / 2 - rect.left;
@@ -907,9 +936,10 @@
                 zoomAt(cx, cy, dist / vPinchDist);
             }
             vPinchDist = dist;
-            // Also pan with two fingers
-            const dx = (touches[0].clientX + touches[1].clientX) / 2 - (vTouches[0].clientX + vTouches[1].clientX) / 2;
-            const dy = (touches[0].clientY + touches[1].clientY) / 2 - (vTouches[0].clientY + vTouches[1].clientY) / 2;
+            const dx = (touches[0].clientX + touches[1].clientX) / 2
+                     - (vTouches[0].clientX + vTouches[1].clientX) / 2;
+            const dy = (touches[0].clientY + touches[1].clientY) / 2
+                     - (vTouches[0].clientY + vTouches[1].clientY) / 2;
             vPanX += dx;
             vPanY += dy;
             applyTransform();
@@ -921,15 +951,21 @@
         vPinchDist = 0;
     }, { passive: true });
 
+    // Keyboard shortcuts (when viewport or page has focus)
+    document.addEventListener('keydown', e => {
+        // Skip if user is typing in an input/select
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+        if (!currentPattern) return;
+        const key = e.key;
+        if (key === '+' || key === '=') { e.preventDefault(); zoomCenter(1.2); }
+        else if (key === '-' || key === '_') { e.preventDefault(); zoomCenter(1 / 1.2); }
+        else if (key === '0') { e.preventDefault(); zoomFit(); }
+        else if (key === '1') { e.preventDefault(); vZoom = 1; vPanX = 0; vPanY = 0; applyTransform(); }
+    });
+
     // Zoom buttons
-    document.getElementById('zoomInBtn').addEventListener('click', () => {
-        const rect = viewport.getBoundingClientRect();
-        zoomAt(rect.width / 2, rect.height / 2, 1.3);
-    });
-    document.getElementById('zoomOutBtn').addEventListener('click', () => {
-        const rect = viewport.getBoundingClientRect();
-        zoomAt(rect.width / 2, rect.height / 2, 1 / 1.3);
-    });
+    document.getElementById('zoomInBtn').addEventListener('click', () => zoomCenter(1.3));
+    document.getElementById('zoomOutBtn').addEventListener('click', () => zoomCenter(1 / 1.3));
     document.getElementById('zoomFitBtn').addEventListener('click', zoomFit);
     document.getElementById('zoomResetBtn').addEventListener('click', () => {
         vZoom = 1;
