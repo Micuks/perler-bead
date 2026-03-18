@@ -115,7 +115,12 @@ def generate():
     height = max(5, min(100, height))
 
     image_bytes = file.read()
-    result = image_to_pattern(image_bytes, width, height)
+    if not image_bytes:
+        return jsonify({"error": "Empty image data"}), 400
+    try:
+        result = image_to_pattern(image_bytes, width, height)
+    except Exception as e:
+        return jsonify({"error": f"Failed to process image: {e}"}), 400
     return jsonify(result)
 
 

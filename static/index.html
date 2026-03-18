@@ -621,22 +621,25 @@
 
         // If crop box is not full image, crop first
         let fileToSend = currentFile;
-        const scaleX = sourceImg.naturalWidth / cropImg.clientWidth;
-        const scaleY = sourceImg.naturalHeight / cropImg.clientHeight;
-        const sx = Math.round(crop.x * scaleX);
-        const sy = Math.round(crop.y * scaleY);
-        const sw = Math.round(crop.w * scaleX);
-        const sh = Math.round(crop.h * scaleY);
-        const fullW = sourceImg.naturalWidth;
-        const fullH = sourceImg.naturalHeight;
-        if (sx > 1 || sy > 1 || Math.abs(sw - fullW) > 2 || Math.abs(sh - fullH) > 2) {
-            // Crop on the fly
-            const oc = document.createElement('canvas');
-            oc.width = sw; oc.height = sh;
-            oc.getContext('2d').drawImage(sourceImg, sx, sy, sw, sh, 0, 0, sw, sh);
-            fileToSend = await new Promise(resolve => {
-                oc.toBlob(blob => resolve(new File([blob], 'crop.png', { type: 'image/png' })), 'image/png');
-            });
+        const displayW = cropImg.clientWidth;
+        const displayH = cropImg.clientHeight;
+        if (displayW > 0 && displayH > 0 && crop.w > 0 && crop.h > 0) {
+            const scaleX = sourceImg.naturalWidth / displayW;
+            const scaleY = sourceImg.naturalHeight / displayH;
+            const sx = Math.round(crop.x * scaleX);
+            const sy = Math.round(crop.y * scaleY);
+            const sw = Math.round(crop.w * scaleX);
+            const sh = Math.round(crop.h * scaleY);
+            const fullW = sourceImg.naturalWidth;
+            const fullH = sourceImg.naturalHeight;
+            if (sw > 0 && sh > 0 && (sx > 1 || sy > 1 || Math.abs(sw - fullW) > 2 || Math.abs(sh - fullH) > 2)) {
+                const oc = document.createElement('canvas');
+                oc.width = sw; oc.height = sh;
+                oc.getContext('2d').drawImage(sourceImg, sx, sy, sw, sh, 0, 0, sw, sh);
+                fileToSend = await new Promise(resolve => {
+                    oc.toBlob(blob => resolve(new File([blob], 'crop.png', { type: 'image/png' })), 'image/png');
+                });
+            }
         }
 
         const fd = new FormData();
