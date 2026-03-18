@@ -372,7 +372,7 @@
             <div class="color-list">
                 <h3>用色统计</h3>
                 <table class="color-table">
-                    <thead><tr><th>颜色</th><th>色号</th><th>名称</th><th>数量</th><th>占比</th></tr></thead>
+                    <thead><tr><th>颜色</th><th>色号</th><th>数量</th><th>占比</th></tr></thead>
                     <tbody id="colorTableBody"></tbody>
                 </table>
                 <p id="totalBeads" style="margin-top:12px; font-size:0.85em; color:#888;"></p>
@@ -768,7 +768,6 @@
             <tr>
                 <td><span class="color-swatch" style="background:${c.hex}"></span></td>
                 <td><strong>${c.code}</strong></td>
-                <td>${c.name}</td>
                 <td>${c.count}</td>
                 <td>${(c.count / total * 100).toFixed(1)}%</td>
             </tr>
@@ -800,8 +799,8 @@
             <h2>拼豆图纸 (${currentPattern.width} x ${currentPattern.height})</h2>
             <img src="${imgData}">
             <h3>用色统计</h3>
-            <table><tr><th>颜色</th><th>色号</th><th>名称</th><th>数量</th></tr>
-            ${currentPattern.colors.map(c => `<tr><td><span class="swatch" style="background:${c.hex}"></span></td><td><b>${c.code}</b></td><td>${c.name}</td><td>${c.count}</td></tr>`).join('')}
+            <table><tr><th>颜色</th><th>色号</th><th>数量</th></tr>
+            ${currentPattern.colors.map(c => `<tr><td><span class="swatch" style="background:${c.hex}"></span></td><td><b>${c.code}</b></td><td>${c.count}</td></tr>`).join('')}
             </table>
             <p>共计 ${currentPattern.width * currentPattern.height} 颗拼豆</p>
             <button onclick="window.print()">打印/保存PDF</button>
