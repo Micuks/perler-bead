@@ -629,20 +629,22 @@
         resultSection.classList.add('hidden');
         generateBtn.disabled = true;
 
-        // If crop box is not full image, crop first
+        // If crop box is not full image, crop on the fly
         let fileToSend = currentFile;
         const displayW = cropImg.clientWidth;
         const displayH = cropImg.clientHeight;
-        if (displayW > 0 && displayH > 0 && crop.w > 0 && crop.h > 0) {
+        const hasCrop = displayW > 0 && displayH > 0 && crop.w > 10 && crop.h > 10;
+        if (hasCrop && sourceImg) {
             const scaleX = sourceImg.naturalWidth / displayW;
             const scaleY = sourceImg.naturalHeight / displayH;
             const sx = Math.round(crop.x * scaleX);
             const sy = Math.round(crop.y * scaleY);
             const sw = Math.round(crop.w * scaleX);
             const sh = Math.round(crop.h * scaleY);
-            const fullW = sourceImg.naturalWidth;
-            const fullH = sourceImg.naturalHeight;
-            if (sw > 0 && sh > 0 && (sx > 1 || sy > 1 || Math.abs(sw - fullW) > 2 || Math.abs(sh - fullH) > 2)) {
+            const isCropped = sx > 2 || sy > 2
+                || sw < sourceImg.naturalWidth - 4
+                || sh < sourceImg.naturalHeight - 4;
+            if (isCropped && sw > 0 && sh > 0) {
                 const oc = document.createElement('canvas');
                 oc.width = sw; oc.height = sh;
                 oc.getContext('2d').drawImage(sourceImg, sx, sy, sw, sh, 0, 0, sw, sh);
