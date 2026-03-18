@@ -181,6 +181,7 @@
             user-select: none;
             -webkit-user-select: none;
             line-height: 0;
+            overflow: hidden;
         }
         .crop-wrap img {
             display: block;
@@ -426,12 +427,15 @@
             }
             cropImg.src = url;
             cropImg.onload = () => {
-                // Default crop = full image
-                crop = { x: 0, y: 0, w: cropImg.clientWidth, h: cropImg.clientHeight };
-                updateCropBox();
-                updateCropInfo();
+                // Unhide first so clientWidth/clientHeight are available
                 cropSection.classList.remove('hidden');
                 generateBtn.disabled = false;
+                // Wait a frame for layout to complete
+                requestAnimationFrame(() => {
+                    crop = { x: 0, y: 0, w: cropImg.clientWidth, h: cropImg.clientHeight };
+                    updateCropBox();
+                    updateCropInfo();
+                });
             };
         };
         img.src = url;
@@ -584,9 +588,11 @@
             }
             cropImg.src = url;
             cropImg.onload = () => {
-                crop = { x: 0, y: 0, w: cropImg.clientWidth, h: cropImg.clientHeight };
-                updateCropBox();
-                updateCropInfo();
+                requestAnimationFrame(() => {
+                    crop = { x: 0, y: 0, w: cropImg.clientWidth, h: cropImg.clientHeight };
+                    updateCropBox();
+                    updateCropInfo();
+                });
             };
         };
         img.src = url;
