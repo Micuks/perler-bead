@@ -13,7 +13,7 @@ app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10MB
 BEAD_RGB = np.array(COLOR_RGB, dtype=np.float64)
 
 
-def image_to_pattern(image_bytes, width=100, height=100, brand="coco"):
+def image_to_pattern(image_bytes, width=100, height=100, brand="mard"):
     """Convert an uploaded image to a fuse bead pattern."""
     img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
     bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
@@ -64,7 +64,7 @@ def generate():
     height = request.form.get("height", 100, type=int)
     width = max(5, min(200, width))
     height = max(5, min(200, height))
-    brand = request.form.get("brand", "coco")
+    brand = request.form.get("brand", "mard")
     if brand not in BRANDS:
         brand = "coco"
 
@@ -76,6 +76,16 @@ def generate():
 @app.route("/api/brands")
 def brands():
     return jsonify({k: v["name"] for k, v in BRANDS.items()})
+
+
+@app.route("/api/colors")
+def api_colors():
+    return jsonify([{"hex": c[0], "coco": c[1], "mard": c[2], "manman": c[3], "panpan": c[4], "mixiaowo": c[5]} for c in COLORS])
+
+
+@app.route("/colors")
+def colors_page():
+    return send_from_directory("static", "colors.html")
 
 
 if __name__ == "__main__":

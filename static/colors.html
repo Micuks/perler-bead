@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>拼豆色号对照表</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+            color: #333;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 30px 20px;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        h1 { font-size: 1.8em; font-weight: 600; color: #222; }
+        .subtitle { color: #888; font-size: 0.9em; margin-top: 6px; }
+        .back-link {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #555;
+            text-decoration: none;
+            font-size: 0.9em;
+        }
+        .back-link:hover { color: #000; }
+        .toolbar {
+            background: #fff;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+            padding: 14px 20px;
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            align-items: center;
+        }
+        .toolbar label { font-size: 0.9em; color: #555; }
+        .toolbar select, .toolbar input {
+            padding: 6px 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 0.9em;
+        }
+        .toolbar input[type="text"] { width: 180px; }
+        .color-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+            gap: 10px;
+        }
+        .color-card {
+            background: #fff;
+            border-radius: 6px;
+            border: 1px solid #e0e0e0;
+            overflow: hidden;
+            text-align: center;
+            transition: box-shadow 0.15s;
+        }
+        .color-card:hover {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .color-swatch {
+            width: 100%;
+            height: 70px;
+        }
+        .color-codes {
+            padding: 8px 6px;
+        }
+        .color-code-primary {
+            font-weight: 700;
+            font-size: 1em;
+            margin-bottom: 2px;
+        }
+        .color-code-secondary {
+            font-size: 0.7em;
+            color: #999;
+            line-height: 1.4;
+        }
+        .color-hex {
+            font-size: 0.7em;
+            color: #bbb;
+            font-family: monospace;
+            margin-top: 2px;
+        }
+        .stats {
+            font-size: 0.85em;
+            color: #888;
+            margin-left: auto;
+        }
+        @media (max-width: 600px) {
+            h1 { font-size: 1.4em; }
+            .color-grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-link">&larr; 返回生成器</a>
+        <header>
+            <h1>拼豆色号对照表</h1>
+            <p class="subtitle">5 种品牌色号体系，点击色块复制色号</p>
+        </header>
+        <div class="toolbar">
+            <label>主显品牌:</label>
+            <select id="brandSelect">
+                <option value="mard">MARD</option>
+                <option value="coco">COCO (色彩)</option>
+                <option value="manman">MANMAN (漫漫)</option>
+                <option value="panpan">PANPAN (盼盼)</option>
+                <option value="mixiaowo">MIXIAOWO (咪小窝)</option>
+            </select>
+            <label>搜索:</label>
+            <input type="text" id="searchInput" placeholder="色号或 HEX...">
+            <span class="stats" id="stats"></span>
+        </div>
+        <div class="color-grid" id="colorGrid"></div>
+    </div>
+    <script>
+    const brandSelect = document.getElementById('brandSelect');
+    const searchInput = document.getElementById('searchInput');
+    const colorGrid = document.getElementById('colorGrid');
+    const stats = document.getElementById('stats');
+    const brandKeys = ['coco', 'mard', 'manman', 'panpan', 'mixiaowo'];
+    const brandLabels = { coco: 'COCO', mard: 'MARD', manman: 'MANMAN', panpan: 'PANPAN', mixiaowo: 'MIXIAOWO' };
+    let allColors = [];
+
+    fetch('/api/colors').then(r => r.json()).then(data => {
+        allColors = data;
+        render();
+    });
+
+    brandSelect.addEventListener('change', render);
+    searchInput.addEventListener('input', render);
+
+    function render() {
+        const brand = brandSelect.value;
+        const query = searchInput.value.trim().toUpperCase();
+        let filtered = allColors;
+        if (query) {
+            filtered = allColors.filter(c =>
+                c.hex.toUpperCase().includes(query) ||
+                brandKeys.some(k => c[k].toUpperCase().includes(query))
+            );
+        }
+        stats.textContent = `${filtered.length} / ${allColors.length} 色`;
+        const otherBrands = brandKeys.filter(k => k !== brand);
+        colorGrid.innerHTML = filtered.map(c => {
+            const secondaryLines = otherBrands.map(k => `${brandLabels[k]}: ${c[k]}`).join(' | ');
+            return `<div class="color-card" onclick="copyCode('${c[brand]}')" title="点击复制 ${c[brand]}">
+                <div class="color-swatch" style="background:${c.hex}"></div>
+                <div class="color-codes">
+                    <div class="color-code-primary">${c[brand]}</div>
+                    <div class="color-code-secondary">${secondaryLines}</div>
+                    <div class="color-hex">${c.hex}</div>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    function copyCode(code) {
+        navigator.clipboard.writeText(code);
+    }
+    </script>
+</body>
+</html>
