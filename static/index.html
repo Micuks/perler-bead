@@ -289,12 +289,22 @@
 
         <div class="controls">
             <div class="control-group">
+                <label>品牌色号:</label>
+                <select id="brandSelect" style="padding:6px 10px; border:1px solid #ddd; border-radius:6px; font-size:0.9em;">
+                    <option value="coco">COCO (色彩)</option>
+                    <option value="mard">MARD</option>
+                    <option value="manman">MANMAN (漫漫)</option>
+                    <option value="panpan">PANPAN (盼盼)</option>
+                    <option value="mixiaowo">MIXIAOWO (咪小窝)</option>
+                </select>
+            </div>
+            <div class="control-group">
                 <label>宽度 (颗):</label>
-                <input type="number" id="widthInput" value="29" min="5" max="100">
+                <input type="number" id="widthInput" value="100" min="5" max="200">
             </div>
             <div class="control-group">
                 <label>高度 (颗):</label>
-                <input type="number" id="heightInput" value="29" min="5" max="100">
+                <input type="number" id="heightInput" value="100" min="5" max="200">
             </div>
             <div class="control-group">
                 <input type="checkbox" id="lockRatio" checked>
@@ -646,6 +656,7 @@
         fd.append('image', fileToSend);
         fd.append('width', widthInput.value);
         fd.append('height', heightInput.value);
+        fd.append('brand', document.getElementById('brandSelect').value);
 
         try {
             const res = await fetch('/api/generate', { method: 'POST', body: fd });
