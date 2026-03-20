@@ -348,9 +348,9 @@
             </div>
             <div class="control-group">
                 <label>渲染模式:</label>
-                <select id="modeSelect" style="padding:6px 10px; border:1px solid #ddd; border-radius:6px; font-size:0.9em;" title="经典：细节保留好，适合大多数场景&#10;感知优化：颜色更准确，但可能丢失细线条">
-                    <option value="classic" selected>经典 (细节优先)</option>
-                    <option value="ciede2000">感知优化 (色准优先，可能丢失细线条)</option>
+                <select id="modeSelect" style="padding:6px 10px; border:1px solid #ddd; border-radius:6px; font-size:0.9em;" title="感知优化：色彩准确，推荐&#10;经典：细节保留好，但较慢且色准略差">
+                    <option value="ciede2000" selected>感知优化 (推荐)</option>
+                    <option value="classic">经典 (细节优先，较慢)</option>
                 </select>
             </div>
             <div class="control-group">
