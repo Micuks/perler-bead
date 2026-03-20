@@ -15,7 +15,7 @@ from skimage.color import rgb2lab, deltaE_ciede2000
 from colors import BRANDS, COLORS, COLOR_RGB
 
 app = Flask(__name__, static_folder="static")
-app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10MB
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20MB (photos can be large)
 
 PATTERNS_DIR = os.path.join(os.path.dirname(__file__), "patterns")
 os.makedirs(PATTERNS_DIR, exist_ok=True)

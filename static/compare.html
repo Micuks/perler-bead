@@ -350,10 +350,22 @@ compareBtn.addEventListener('click', async () => {
     fd.append('corners', JSON.stringify(pixelCorners));
     fd.append('pattern_id', patternData.pattern_id);
 
-    const res = await fetch('/api/compare', { method: 'POST', body: fd });
+    let res;
+    try {
+        res = await fetch('/api/compare', { method: 'POST', body: fd });
+    } catch (e) {
+        loading.classList.add('hidden');
+        alert('网络错误，请重试'); return;
+    }
     loading.classList.add('hidden');
-    if (!res.ok) { alert('对比失败: ' + res.status); return; }
+    if (!res.ok) {
+        let msg = '对比失败 (' + res.status + ')';
+        if (res.status === 413) msg = '照片太大，请压缩后重试';
+        else if (res.status === 502 || res.status === 504) msg = '服务暂时不可用，请稍后重试';
+        alert(msg); return;
+    }
     compareResult = await res.json();
+    if (compareResult.error) { alert(compareResult.error); return; }
     renderResult();
     step3.classList.remove('hidden');
     requestAnimationFrame(rZoomFit);
