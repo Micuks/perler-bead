@@ -238,10 +238,18 @@ def image_to_pattern(image_bytes, width=100, height=100, brand="mard",
         pixels = _ordered_dither(np.array(img))
         idx_grid = _lut_lookup_vectorized(pixels.reshape(-1, 3)).reshape(height, width)
     else:
-        img = img.resize((width, height), Image.BOX)
-        pixels = np.array(img)
+        # Edge-aware pipeline: resize to 4x → bilateral filter → BOX to target → CIEDE2000
+        # Bilateral at 4x target resolution is fast and effective: smooths within-region
+        # noise while preserving edges, so BOX resize produces fewer mixed colors.
+        mid_w, mid_h = width * 4, height * 4
+        img_mid = img.resize((mid_w, mid_h), Image.BOX)
+        pixels_bgr = cv2.cvtColor(np.array(img_mid), cv2.COLOR_RGB2BGR)
+        filtered_bgr = cv2.bilateralFilter(pixels_bgr, d=9, sigmaColor=75, sigmaSpace=75)
+        filtered_rgb = cv2.cvtColor(filtered_bgr, cv2.COLOR_BGR2RGB)
+        img_filtered = Image.fromarray(filtered_rgb)
+        img_final = img_filtered.resize((width, height), Image.BOX)
+        pixels = np.array(img_final)
         idx_grid = _lut_lookup_vectorized(pixels.reshape(-1, 3)).reshape(height, width)
-        idx_grid = _denoise_isolated(idx_grid)
 
     pattern = []
     color_counts = {}
