@@ -348,10 +348,10 @@
             </div>
             <div class="control-group">
                 <label>渲染模式:</label>
-                <select id="modeSelect" style="padding:6px 10px; border:1px solid #ddd; border-radius:6px; font-size:0.9em;" title="感知优化：CIEDE2000 色差匹配，色准好&#10;AI 增强：PixelOE 轮廓感知下采样，细节保留最好&#10;经典：Lanczos + RGB，速度快">
+                <select id="modeSelect" style="padding:6px 10px; border:1px solid #ddd; border-radius:6px; font-size:0.9em;" title="感知优化：CIEDE2000 色差匹配，色准最好&#10;经典：Lanczos 锐化，细节保留好&#10;像素风格化：PixelOE 轮廓强化，适合卡通/简笔画">
                     <option value="ciede2000" selected>感知优化 (推荐)</option>
-                    <option value="pixeloe">AI 增强 (PixelOE 细节保留)</option>
-                    <option value="classic">经典 (Lanczos + RGB)</option>
+                    <option value="classic">经典 (细节优先)</option>
+                    <option value="pixeloe">像素风格化 (PixelOE, 较慢)</option>
                 </select>
             </div>
             <div class="control-group">
