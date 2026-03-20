@@ -158,7 +158,11 @@ def _denoise_isolated(idx_grid):
                 counts[n] = counts.get(n, 0) + 1
             dominant = max(counts, key=counts.get)
             if dominant != cur and counts[dominant] >= 3:
-                # Check color distance: only remove if LOW contrast (artifact)
+                # Keep if the pixel has ANY same-color neighbor (part of a line/feature)
+                if any(n == cur for n in neighbors):
+                    continue
+                # Truly isolated (zero same-color neighbors):
+                # only remove if low contrast (blending artifact, not a real detail)
                 diff = BEAD_RGB_NP[cur] - BEAD_RGB_NP[dominant]
                 dist_sq = float(np.dot(diff, diff))
                 if dist_sq < CONTRAST_THRESHOLD_SQ:
@@ -175,21 +179,23 @@ def image_to_pattern(image_bytes, width=100, height=100, brand="mard", dither="n
     brand_idx = BRANDS.get(brand, BRANDS["mard"])["index"]
 
     if dither == "floyd-steinberg":
-        img = img.resize((width, height), Image.LANCZOS)
+        img = img.resize((width, height), Image.BOX)
         pixels = np.array(img)
         idx_grid = _floyd_steinberg_dither(pixels, brand_idx)
     elif dither == "ordered":
-        img = img.resize((width, height), Image.LANCZOS)
+        img = img.resize((width, height), Image.BOX)
         pixels = _ordered_dither(np.array(img))
         flat = pixels.reshape(-1, 3)
         idx_grid = _lut_lookup_vectorized(flat).reshape(height, width)
     else:
-        # Lanczos resize preserves detail (eyes, highlights, thin lines)
-        img = img.resize((width, height), Image.LANCZOS)
+        # BOX resize: area-average with no ringing/overshoot artifacts
+        # (Lanczos sinc kernel causes color fringing at edges)
+        img = img.resize((width, height), Image.BOX)
         pixels = np.array(img)
         flat = pixels.reshape(-1, 3)
         idx_grid = _lut_lookup_vectorized(flat).reshape(height, width)
-        # Remove isolated outlier pixels (edge-bleeding artifacts)
+        # Remove low-contrast isolated outliers (edge-blend artifacts)
+        # High-contrast features (eyes, highlights) are preserved
         idx_grid = _denoise_isolated(idx_grid)
 
     # Build pattern JSON
