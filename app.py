@@ -126,14 +126,21 @@ def _ordered_dither(pixels):
 
 
 def _denoise_isolated(idx_grid):
-    """Remove isolated single-pixel outliers.
+    """Remove isolated single-pixel outliers caused by Lanczos edge bleeding.
 
-    A pixel is "isolated" if 3+ of its 4-connected neighbors share the same
-    color AND that color differs from the pixel itself.  Replace it with the
-    dominant neighbor color.  This cleans edge-bleeding artifacts from Lanczos
-    without destroying intentional small features (eyes, highlights) which are
-    typically 2+ pixels.
+    Only replaces a pixel when ALL of:
+    1. 3+ of its 4-connected neighbors agree on a different color
+    2. The pixel's color is SIMILAR to the dominant neighbor color
+       (low RGB distance = likely a Lanczos blending artifact)
+
+    High-contrast isolated pixels (e.g. dark eyes on light face) are kept
+    because they are intentional features, not blending artifacts.
     """
+    # Lanczos blending artifacts produce colors close to the true edge colors.
+    # Real features (eyes, highlights) are drastically different from surroundings.
+    # Threshold: squared RGB distance. ~3000 ≈ delta of ~30 per channel.
+    CONTRAST_THRESHOLD_SQ = 3000
+
     h, w = idx_grid.shape
     out = idx_grid.copy()
     for y in range(h):
@@ -146,15 +153,16 @@ def _denoise_isolated(idx_grid):
             if x < w - 1: neighbors.append(idx_grid[y, x + 1])
             if len(neighbors) < 3:
                 continue
-            # Count how many neighbors share the most common neighbor color
             counts = {}
             for n in neighbors:
                 counts[n] = counts.get(n, 0) + 1
             dominant = max(counts, key=counts.get)
-            # Replace only if current pixel differs from dominant AND
-            # dominant has 3+ votes (strong consensus)
             if dominant != cur and counts[dominant] >= 3:
-                out[y, x] = dominant
+                # Check color distance: only remove if LOW contrast (artifact)
+                diff = BEAD_RGB_NP[cur] - BEAD_RGB_NP[dominant]
+                dist_sq = float(np.dot(diff, diff))
+                if dist_sq < CONTRAST_THRESHOLD_SQ:
+                    out[y, x] = dominant
     return out
 
 
