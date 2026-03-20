@@ -556,9 +556,50 @@ resultViewport.addEventListener('wheel', e => {
         rPanX -= e.deltaX; rPanY -= e.deltaY; rApply();
     }
 }, { passive: false });
-resultViewport.addEventListener('mousedown', e => { if (e.button===0) { rDragging=true; rLastX=e.clientX; rLastY=e.clientY; }});
-window.addEventListener('mousemove', e => { if (!rDragging) return; rPanX+=e.clientX-rLastX; rPanY+=e.clientY-rLastY; rLastX=e.clientX; rLastY=e.clientY; rApply(); });
-window.addEventListener('mouseup', () => { rDragging = false; });
+// Mouse drag
+resultViewport.addEventListener('mousedown', e => {
+    if (e.button===0) { rDragging=true; rLastX=e.clientX; rLastY=e.clientY; resultViewport.style.cursor='grabbing'; }
+});
+window.addEventListener('mousemove', e => {
+    if (!rDragging) return;
+    rPanX+=e.clientX-rLastX; rPanY+=e.clientY-rLastY;
+    rLastX=e.clientX; rLastY=e.clientY; rApply();
+});
+window.addEventListener('mouseup', () => { rDragging=false; resultViewport.style.cursor=''; });
+
+// Touch: single finger pan, two finger pinch zoom
+let rTouches = [], rPinchDist = 0;
+resultViewport.addEventListener('touchstart', e => {
+    rTouches = [...e.touches];
+    if (rTouches.length === 2) {
+        rPinchDist = Math.hypot(rTouches[0].clientX - rTouches[1].clientX, rTouches[0].clientY - rTouches[1].clientY);
+    }
+}, { passive: true });
+resultViewport.addEventListener('touchmove', e => {
+    e.preventDefault();
+    const touches = [...e.touches];
+    if (touches.length === 1 && rTouches.length === 1) {
+        rPanX += touches[0].clientX - rTouches[0].clientX;
+        rPanY += touches[0].clientY - rTouches[0].clientY;
+        rApply();
+    } else if (touches.length === 2 && rTouches.length === 2) {
+        const dist = Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+        if (rPinchDist > 0) {
+            const rect = resultViewport.getBoundingClientRect();
+            const cx = (touches[0].clientX + touches[1].clientX) / 2 - rect.left;
+            const cy = (touches[0].clientY + touches[1].clientY) / 2 - rect.top;
+            rZoomAt(cx, cy, dist / rPinchDist);
+        }
+        rPinchDist = dist;
+        const dx = (touches[0].clientX + touches[1].clientX) / 2 - (rTouches[0].clientX + rTouches[1].clientX) / 2;
+        const dy = (touches[0].clientY + touches[1].clientY) / 2 - (rTouches[0].clientY + rTouches[1].clientY) / 2;
+        rPanX += dx; rPanY += dy; rApply();
+    }
+    rTouches = touches;
+}, { passive: false });
+resultViewport.addEventListener('touchend', e => { rTouches = [...e.touches]; rPinchDist = 0; }, { passive: true });
+
+// Keyboard shortcuts
 document.addEventListener('keydown', e => {
     if (e.target.tagName==='INPUT') return;
     if (!compareResult) return;
