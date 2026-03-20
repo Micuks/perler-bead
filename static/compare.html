@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>拼豆对比 - 检查拼豆板</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
+            background: #f5f5f5; min-height: 100vh; color: #333;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 30px 20px; }
+        header { text-align: center; margin-bottom: 24px; }
+        h1 { font-size: 1.8em; font-weight: 600; color: #222; }
+        .subtitle { color: #888; font-size: 0.9em; margin-top: 6px; }
+        .back-link { display: inline-block; margin-bottom: 20px; color: #555; text-decoration: none; font-size: 0.9em; }
+        .back-link:hover { color: #000; }
+
+        .step { background: #fff; border-radius: 8px; border: 1px solid #e0e0e0; padding: 20px; margin-bottom: 20px; }
+        .step h3 { font-size: 1em; color: #555; margin-bottom: 12px; }
+        .step-hint { font-size: 0.8em; color: #999; margin-bottom: 12px; }
+
+        .btn { padding: 8px 24px; background: #333; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9em; }
+        .btn:hover { background: #555; }
+        .btn:disabled { background: #aaa; cursor: not-allowed; }
+        .btn-outline { background: #fff; color: #333; border: 1px solid #ccc; }
+        .btn-outline:hover { background: #f0f0f0; }
+
+        .pattern-id-input { padding: 6px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.9em; width: 200px; font-family: monospace; }
+        .status-msg { font-size: 0.85em; margin-left: 10px; }
+        .status-ok { color: #4caf50; }
+        .status-err { color: #e53935; }
+
+        /* Calibration canvas */
+        .calib-wrap { position: relative; display: inline-block; user-select: none; line-height: 0; max-width: 100%; }
+        .calib-wrap img { display: block; max-width: 100%; max-height: 70vh; }
+        .calib-wrap canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        .corner-handle {
+            position: absolute; width: 20px; height: 20px; background: rgba(255,50,50,0.8);
+            border: 2px solid #fff; border-radius: 50%; cursor: move; transform: translate(-50%, -50%);
+            z-index: 2; touch-action: none;
+        }
+        .corner-handle .label {
+            position: absolute; top: -20px; left: 50%; transform: translateX(-50%);
+            font-size: 10px; color: #fff; background: rgba(0,0,0,0.6); padding: 1px 4px; border-radius: 3px; white-space: nowrap;
+        }
+
+        /* Result */
+        .result-viewport {
+            position: relative; width: 100%; height: 60vh; min-height: 300px;
+            overflow: hidden; border: 1px solid #eee; border-radius: 6px;
+            background: #f0f0f0; cursor: grab; touch-action: none;
+        }
+        .result-viewport:active { cursor: grabbing; }
+        .result-viewport canvas { position: absolute; top: 0; left: 0; transform-origin: 0 0; image-rendering: pixelated; }
+        .stats-bar { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 12px; font-size: 0.9em; }
+        .stat { padding: 8px 16px; border-radius: 6px; font-weight: 600; }
+        .stat-correct { background: #e8f5e9; color: #2e7d32; }
+        .stat-wrong { background: #fff3e0; color: #e65100; }
+        .stat-missing { background: #fce4ec; color: #c62828; }
+        .stat-pct { background: #e3f2fd; color: #1565c0; }
+
+        .filter-bar { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+        .filter-btn { padding: 4px 12px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; font-size: 0.8em; }
+        .filter-btn.active { background: #333; color: #fff; border-color: #333; }
+
+        .hidden { display: none; }
+        .loading { text-align: center; padding: 30px; color: #888; }
+        .spinner { display: inline-block; width: 24px; height: 24px; border: 3px solid #eee; border-top-color: #333; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+<div class="container">
+    <a href="/" target="_blank" class="back-link">&larr; 返回生成器</a>
+    <header>
+        <h1>拼豆板对比检查</h1>
+        <p class="subtitle">上传拼豆板照片，与图纸对比，找出拼错和未拼的位置</p>
+    </header>
+
+    <!-- Step 1: Load pattern -->
+    <div class="step" id="step1">
+        <h3>第一步：加载图纸</h3>
+        <p class="step-hint">输入图纸 ID（生成图纸时自动获得），或从生成器页面跳转过来</p>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <input type="text" class="pattern-id-input" id="patternIdInput" placeholder="图纸 ID">
+            <button class="btn" id="loadPatternBtn">加载图纸</button>
+            <span class="status-msg" id="patternStatus"></span>
+        </div>
+    </div>
+
+    <!-- Step 2: Upload photo & calibrate -->
+    <div class="step hidden" id="step2">
+        <h3>第二步：上传拼豆板照片并标定四角</h3>
+        <p class="step-hint">拖拽四个红色圆点到拼豆板的四个角（左上→右上→右下→左下）</p>
+        <div style="margin-bottom:12px;">
+            <input type="file" id="photoInput" accept="image/*" style="display:none;">
+            <button class="btn btn-outline" id="uploadPhotoBtn">选择照片</button>
+            <span style="font-size:0.85em; color:#888; margin-left:8px;" id="photoName"></span>
+        </div>
+        <div class="calib-wrap hidden" id="calibWrap">
+            <img id="calibImg">
+            <canvas id="calibCanvas"></canvas>
+            <div class="corner-handle" data-idx="0"><span class="label">左上</span></div>
+            <div class="corner-handle" data-idx="1"><span class="label">右上</span></div>
+            <div class="corner-handle" data-idx="2"><span class="label">右下</span></div>
+            <div class="corner-handle" data-idx="3"><span class="label">左下</span></div>
+        </div>
+        <div style="margin-top:12px;">
+            <button class="btn hidden" id="compareBtn">开始对比</button>
+        </div>
+    </div>
+
+    <!-- Loading -->
+    <div class="loading hidden" id="loading">
+        <div class="spinner"></div>
+        <p style="margin-top:10px;">正在对比分析...</p>
+    </div>
+
+    <!-- Step 3: Results -->
+    <div class="step hidden" id="step3">
+        <h3>对比结果</h3>
+        <div class="stats-bar" id="statsBar"></div>
+        <div class="filter-bar" id="filterBar">
+            <button class="filter-btn active" data-filter="all">全部</button>
+            <button class="filter-btn" data-filter="wrong">仅错误</button>
+            <button class="filter-btn" data-filter="missing">仅未拼</button>
+        </div>
+        <div class="result-viewport" id="resultViewport" style="margin-top:12px;">
+            <canvas id="resultCanvas"></canvas>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center; margin-top:10px;">
+            <span style="font-size:0.7em; color:#aaa;">滑动平移 · Ctrl+滚轮缩放 · 快捷键 + - 0</span>
+        </div>
+    </div>
+</div>
+
+<script>
+const patternIdInput = document.getElementById('patternIdInput');
+const loadPatternBtn = document.getElementById('loadPatternBtn');
+const patternStatus = document.getElementById('patternStatus');
+const step2 = document.getElementById('step2');
+const photoInput = document.getElementById('photoInput');
+const calibWrap = document.getElementById('calibWrap');
+const calibImg = document.getElementById('calibImg');
+const calibCanvas = document.getElementById('calibCanvas');
+const compareBtn = document.getElementById('compareBtn');
+const loading = document.getElementById('loading');
+const step3 = document.getElementById('step3');
+const resultCanvas = document.getElementById('resultCanvas');
+const resultViewport = document.getElementById('resultViewport');
+
+let patternData = null;
+let photoFile = null;
+// Corner positions as fractions [0-1] of image dimensions
+let corners = [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]];
+let compareResult = null;
+let activeFilter = 'all';
+
+// Load from URL params
+const urlParams = new URLSearchParams(window.location.search);
+if (urlParams.get('id')) {
+    patternIdInput.value = urlParams.get('id');
+    loadPatternBtn.click();
+}
+
+// Step 1: Load pattern
+loadPatternBtn.addEventListener('click', async () => {
+    const pid = patternIdInput.value.trim();
+    if (!pid) { patternStatus.textContent = '请输入图纸 ID'; patternStatus.className = 'status-msg status-err'; return; }
+    patternStatus.textContent = '加载中...'; patternStatus.className = 'status-msg';
+    const res = await fetch(`/api/pattern/${encodeURIComponent(pid)}`);
+    if (!res.ok) {
+        patternStatus.textContent = '图纸不存在或已过期'; patternStatus.className = 'status-msg status-err'; return;
+    }
+    patternData = await res.json();
+    patternStatus.textContent = `已加载 (${patternData.width}×${patternData.height})`;
+    patternStatus.className = 'status-msg status-ok';
+    step2.classList.remove('hidden');
+});
+
+// Step 2: Photo upload
+document.getElementById('uploadPhotoBtn').addEventListener('click', () => photoInput.click());
+photoInput.addEventListener('change', () => {
+    if (!photoInput.files.length) return;
+    photoFile = photoInput.files[0];
+    document.getElementById('photoName').textContent = photoFile.name;
+    const url = URL.createObjectURL(photoFile);
+    calibImg.src = url;
+    calibImg.onload = () => {
+        calibWrap.classList.remove('hidden');
+        compareBtn.classList.remove('hidden');
+        corners = [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]];
+        updateCornerHandles();
+        drawCalibOverlay();
+    };
+});
+
+// Corner handles
+const handles = calibWrap.querySelectorAll('.corner-handle');
+function updateCornerHandles() {
+    const w = calibImg.clientWidth, h = calibImg.clientHeight;
+    handles.forEach((el, i) => {
+        el.style.left = (corners[i][0] * w) + 'px';
+        el.style.top = (corners[i][1] * h) + 'px';
+    });
+}
+
+function drawCalibOverlay() {
+    const w = calibImg.clientWidth, h = calibImg.clientHeight;
+    calibCanvas.width = w; calibCanvas.height = h;
+    const ctx = calibCanvas.getContext('2d');
+    ctx.clearRect(0, 0, w, h);
+    ctx.strokeStyle = 'rgba(255,50,50,0.7)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    corners.forEach((c, i) => {
+        const x = c[0] * w, y = c[1] * h;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.closePath();
+    ctx.stroke();
+}
+
+handles.forEach(el => {
+    const startDrag = e => {
+        e.preventDefault();
+        const idx = parseInt(el.dataset.idx);
+        const move = ev => {
+            const t = ev.touches ? ev.touches[0] : ev;
+            const rect = calibWrap.getBoundingClientRect();
+            corners[idx][0] = Math.max(0, Math.min(1, (t.clientX - rect.left) / calibImg.clientWidth));
+            corners[idx][1] = Math.max(0, Math.min(1, (t.clientY - rect.top) / calibImg.clientHeight));
+            updateCornerHandles();
+            drawCalibOverlay();
+        };
+        const end = () => {
+            document.removeEventListener('mousemove', move);
+            document.removeEventListener('mouseup', end);
+            document.removeEventListener('touchmove', move);
+            document.removeEventListener('touchend', end);
+        };
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', end);
+        document.addEventListener('touchmove', move, { passive: false });
+        document.addEventListener('touchend', end);
+    };
+    el.addEventListener('mousedown', startDrag);
+    el.addEventListener('touchstart', startDrag, { passive: false });
+});
+
+// Step 2→3: Compare
+compareBtn.addEventListener('click', async () => {
+    if (!patternData || !photoFile) return;
+    loading.classList.remove('hidden');
+    step3.classList.add('hidden');
+
+    // Convert corner fractions to pixel coords in original image
+    const img = new Image();
+    img.src = URL.createObjectURL(photoFile);
+    await new Promise(r => img.onload = r);
+    const pixelCorners = corners.map(c => [
+        Math.round(c[0] * img.naturalWidth),
+        Math.round(c[1] * img.naturalHeight)
+    ]);
+
+    const fd = new FormData();
+    fd.append('photo', photoFile);
+    fd.append('corners', JSON.stringify(pixelCorners));
+    fd.append('pattern_id', patternData.pattern_id);
+
+    const res = await fetch('/api/compare', { method: 'POST', body: fd });
+    loading.classList.add('hidden');
+    if (!res.ok) { alert('对比失败: ' + res.status); return; }
+    compareResult = await res.json();
+    renderResult();
+    step3.classList.remove('hidden');
+    requestAnimationFrame(rZoomFit);
+});
+
+// Result rendering
+function renderResult() {
+    const data = compareResult;
+    const cellSize = 28;
+    const w = data.width * cellSize, h = data.height * cellSize;
+    resultCanvas.width = w; resultCanvas.height = h;
+    const ctx = resultCanvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, w, h);
+
+    for (let y = 0; y < data.height; y++) {
+        for (let x = 0; x < data.width; x++) {
+            const cell = data.grid[y][x];
+            const px = x * cellSize, py = y * cellSize;
+
+            if (activeFilter !== 'all' && cell.status !== activeFilter) {
+                // Show expected pattern faded
+                ctx.fillStyle = cell.expected_hex;
+                ctx.globalAlpha = 0.15;
+                ctx.fillRect(px, py, cellSize, cellSize);
+                ctx.globalAlpha = 1;
+                continue;
+            }
+
+            // Draw expected color as base
+            ctx.fillStyle = cell.expected_hex;
+            ctx.fillRect(px, py, cellSize, cellSize);
+
+            if (cell.status === 'correct') {
+                // Subtle green border
+                ctx.strokeStyle = 'rgba(76,175,80,0.3)';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(px + 0.5, py + 0.5, cellSize - 1, cellSize - 1);
+            } else if (cell.status === 'wrong') {
+                // Split cell: left=expected, right=actual
+                ctx.fillStyle = cell.actual_hex;
+                ctx.fillRect(px + cellSize / 2, py, cellSize / 2, cellSize);
+                // Yellow border
+                ctx.strokeStyle = '#ff9800';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(px + 1, py + 1, cellSize - 2, cellSize - 2);
+                // Show expected code
+                ctx.fillStyle = '#000';
+                ctx.font = `bold ${Math.floor(cellSize * 0.3)}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(cell.expected_code, px + cellSize / 2, py + cellSize / 2);
+            } else if (cell.status === 'missing') {
+                // Red semi-transparent overlay
+                ctx.fillStyle = 'rgba(229,57,53,0.35)';
+                ctx.fillRect(px, py, cellSize, cellSize);
+                // X mark
+                ctx.strokeStyle = 'rgba(229,57,53,0.6)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(px + 4, py + 4); ctx.lineTo(px + cellSize - 4, py + cellSize - 4);
+                ctx.moveTo(px + cellSize - 4, py + 4); ctx.lineTo(px + 4, py + cellSize - 4);
+                ctx.stroke();
+            }
+
+            // Grid
+            ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+            ctx.lineWidth = 0.5;
+            ctx.strokeRect(px, py, cellSize, cellSize);
+        }
+    }
+
+    // Stats bar
+    const s = data.stats;
+    document.getElementById('statsBar').innerHTML = `
+        <div class="stat stat-pct">${s.completion_pct}% 完成</div>
+        <div class="stat stat-correct">${s.correct} 正确</div>
+        <div class="stat stat-wrong">${s.wrong} 错色</div>
+        <div class="stat stat-missing">${s.missing} 未拼</div>
+    `;
+}
+
+// Filter buttons
+document.getElementById('filterBar').addEventListener('click', e => {
+    const btn = e.target.closest('.filter-btn');
+    if (!btn) return;
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeFilter = btn.dataset.filter;
+    if (compareResult) renderResult();
+});
+
+// Pan & Zoom for result viewport (same as main page)
+let rZoom = 1, rPanX = 0, rPanY = 0, rDragging = false, rLastX = 0, rLastY = 0;
+function rApply() {
+    resultCanvas.style.transform = `translate(${rPanX}px, ${rPanY}px) scale(${rZoom})`;
+}
+function rZoomFit() {
+    const vw = resultViewport.clientWidth, vh = resultViewport.clientHeight;
+    const cw = resultCanvas.width, ch = resultCanvas.height;
+    if (!cw || !ch) return;
+    rZoom = Math.min(vw / cw, vh / ch, 4);
+    rPanX = (vw - cw * rZoom) / 2;
+    rPanY = (vh - ch * rZoom) / 2;
+    rApply();
+}
+function rZoomAt(cx, cy, f) {
+    const nz = Math.max(0.05, Math.min(10, rZoom * f));
+    const r = nz / rZoom;
+    rPanX = cx - r * (cx - rPanX);
+    rPanY = cy - r * (cy - rPanY);
+    rZoom = nz; rApply();
+}
+resultViewport.addEventListener('wheel', e => {
+    e.preventDefault();
+    if (e.ctrlKey || e.metaKey) {
+        const rect = resultViewport.getBoundingClientRect();
+        rZoomAt(e.clientX - rect.left, e.clientY - rect.top, e.deltaY < 0 ? 1.08 : 1/1.08);
+    } else {
+        rPanX -= e.deltaX; rPanY -= e.deltaY; rApply();
+    }
+}, { passive: false });
+resultViewport.addEventListener('mousedown', e => { if (e.button===0) { rDragging=true; rLastX=e.clientX; rLastY=e.clientY; }});
+window.addEventListener('mousemove', e => { if (!rDragging) return; rPanX+=e.clientX-rLastX; rPanY+=e.clientY-rLastY; rLastX=e.clientX; rLastY=e.clientY; rApply(); });
+window.addEventListener('mouseup', () => { rDragging = false; });
+document.addEventListener('keydown', e => {
+    if (e.target.tagName==='INPUT') return;
+    if (!compareResult) return;
+    const rect = resultViewport.getBoundingClientRect();
+    if (e.key==='+'||e.key==='=') { e.preventDefault(); rZoomAt(rect.width/2, rect.height/2, 1.2); }
+    else if (e.key==='-') { e.preventDefault(); rZoomAt(rect.width/2, rect.height/2, 1/1.2); }
+    else if (e.key==='0') { e.preventDefault(); rZoomFit(); }
+});
+</script>
+</body>
+</html>

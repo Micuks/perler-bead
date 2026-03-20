@@ -432,6 +432,8 @@
                     <div class="actions" style="margin-top:0;">
                         <button class="btn" id="downloadBtn">下载图纸 (PNG)</button>
                         <button class="btn btn-outline" id="downloadPdfBtn">下载 PDF</button>
+                        <a class="btn btn-outline hidden" id="compareLink" target="_blank" style="text-decoration:none;">对比拼豆板</a>
+                        <span id="patternIdDisplay" style="font-size:0.75em; color:#aaa; font-family:monospace;"></span>
                     </div>
                 </div>
             </div>
@@ -745,6 +747,13 @@
             renderColorTable(data);
             resultSection.classList.remove('hidden');
             requestAnimationFrame(zoomFit);
+            // Show pattern ID and compare link
+            if (data.pattern_id) {
+                document.getElementById('patternIdDisplay').textContent = 'ID: ' + data.pattern_id;
+                const link = document.getElementById('compareLink');
+                link.href = '/compare?id=' + data.pattern_id;
+                link.classList.remove('hidden');
+            }
         } catch (e) {
             alert('生成失败: ' + e.message);
         } finally {
