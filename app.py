@@ -54,10 +54,18 @@ for i in range(0, N_LUT, CHUNK):
         dists[:, j] = deltaE_ciede2000(chunk_lab, bead_tile, channel_axis=-1)
     CIEDE2000_LUT[i:end] = np.argmin(dists, axis=1).astype(np.int16)
 
-print(f"LUT built in {time.time() - t0:.1f}s")
+print(f"CIEDE2000 LUT built in {time.time() - t0:.1f}s")
 
-BEAD_RGB_FOR_MATMUL = BEAD_RGB_NP.copy()
-_bead_sq = np.sum(BEAD_RGB_FOR_MATMUL ** 2, axis=1, keepdims=True).T
+# Build RGB Euclidean LUT (for classic mode) — much faster to compute
+t1 = time.time()
+_grid_f = _grid.astype(np.float64)
+_bead_f = BEAD_RGB_NP.astype(np.float64)
+_grid_sq = np.sum(_grid_f ** 2, axis=1, keepdims=True)  # (N_LUT, 1)
+_bead_sq_lut = np.sum(_bead_f ** 2, axis=1, keepdims=True).T  # (1, N_BEADS)
+_rgb_dists = _grid_sq + _bead_sq_lut - 2 * _grid_f @ _bead_f.T  # (N_LUT, N_BEADS)
+RGB_LUT = np.argmin(_rgb_dists, axis=1).astype(np.int16)
+del _grid_f, _grid_sq, _bead_sq_lut, _rgb_dists
+print(f"RGB LUT built in {time.time() - t1:.3f}s")
 
 
 # --- Pattern storage with TTL ---
@@ -119,6 +127,12 @@ def _lut_lookup_vectorized(pixels_flat):
     quantized = pixels_flat.astype(np.int32) >> LUT_SHIFT
     lut_indices = quantized[:, 0] * LUT_SIZE * LUT_SIZE + quantized[:, 1] * LUT_SIZE + quantized[:, 2]
     return CIEDE2000_LUT[lut_indices]
+
+
+def _rgb_lut_lookup_vectorized(pixels_flat):
+    quantized = pixels_flat.astype(np.int32) >> LUT_SHIFT
+    lut_indices = quantized[:, 0] * LUT_SIZE * LUT_SIZE + quantized[:, 1] * LUT_SIZE + quantized[:, 2]
+    return RGB_LUT[lut_indices]
 
 
 def _floyd_steinberg_dither(pixels, brand_idx):
@@ -187,12 +201,6 @@ def _denoise_isolated(idx_grid):
     return out
 
 
-def _rgb_nearest(pixels_flat):
-    flat = pixels_flat.astype(np.float64)
-    pixel_sq = np.sum(flat ** 2, axis=1, keepdims=True)
-    distances = pixel_sq + _bead_sq - 2 * flat @ BEAD_RGB_FOR_MATMUL.T
-    return np.argmin(distances, axis=1)
-
 
 def image_to_pattern(image_bytes, width=100, height=100, brand="mard",
                      dither="none", mode="ciede2000"):
@@ -202,9 +210,10 @@ def image_to_pattern(image_bytes, width=100, height=100, brand="mard",
     brand_idx = BRANDS.get(brand, BRANDS["mard"])["index"]
 
     if mode == "classic":
+        # Lanczos preserves sharp edges/thin lines; RGB LUT for fast matching
         img = img.resize((width, height), Image.LANCZOS)
         pixels = np.array(img)
-        idx_grid = _rgb_nearest(pixels.reshape(-1, 3)).reshape(height, width)
+        idx_grid = _rgb_lut_lookup_vectorized(pixels.reshape(-1, 3)).reshape(height, width)
     elif dither == "floyd-steinberg":
         img = img.resize((width, height), Image.BOX)
         idx_grid = _floyd_steinberg_dither(np.array(img), brand_idx)
