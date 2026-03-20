@@ -8,6 +8,7 @@ import time
 import uuid
 import threading
 from flask import Flask, request, jsonify, send_from_directory
+from flask_compress import Compress
 from PIL import Image
 import numpy as np
 import cv2
@@ -16,6 +17,7 @@ from colors import BRANDS, COLORS, COLOR_RGB
 
 app = Flask(__name__, static_folder="static")
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20MB (photos can be large)
+Compress(app)
 
 PATTERNS_DIR = os.path.join(os.path.dirname(__file__), "patterns")
 os.makedirs(PATTERNS_DIR, exist_ok=True)
@@ -526,4 +528,4 @@ def api_colors():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8892, debug=False)
+    app.run(host="0.0.0.0", port=8892, debug=False, threaded=True)
