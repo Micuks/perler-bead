@@ -138,7 +138,14 @@
             <div class="corner-handle" data-idx="2"><span class="label">右下</span></div>
             <div class="corner-handle" data-idx="3"><span class="label">左下</span></div>
         </div>
-        <div style="margin-top:12px;">
+        <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:12px;">
+            <div style="display:flex; gap:8px; align-items:center;">
+                <label style="font-size:0.85em; color:#555;">照片中拼豆数:</label>
+                <input type="number" id="gridWInput" min="1" max="200" placeholder="宽" style="width:60px; padding:4px 8px; border:1px solid #ddd; border-radius:4px; font-size:0.85em;">
+                <span style="color:#aaa;">×</span>
+                <input type="number" id="gridHInput" min="1" max="200" placeholder="高" style="width:60px; padding:4px 8px; border:1px solid #ddd; border-radius:4px; font-size:0.85em;">
+                <span style="font-size:0.75em; color:#aaa;">留空 = 整张图纸</span>
+            </div>
             <button class="btn hidden" id="compareBtn">开始对比</button>
         </div>
     </div>
@@ -378,6 +385,10 @@ compareBtn.addEventListener('click', async () => {
     fd.append('photo', photoFile);
     fd.append('corners', JSON.stringify(pixelCorners));
     fd.append('pattern_id', patternData.pattern_id);
+    const gw = document.getElementById('gridWInput').value;
+    const gh = document.getElementById('gridHInput').value;
+    if (gw) fd.append('grid_w', gw);
+    if (gh) fd.append('grid_h', gh);
 
     try {
         const data = await new Promise((resolve, reject) => {
@@ -492,11 +503,16 @@ function renderResult() {
 
     // Stats bar
     const s = data.stats;
+    let posInfo = '';
+    if (data.offset_x !== undefined && (data.width < data.pattern_width || data.height < data.pattern_height)) {
+        posInfo = `<div class="stat" style="background:#f3e5f5; color:#6a1b9a;">匹配位置: (${data.offset_x}, ${data.offset_y}) - ${data.width}×${data.height} / ${data.pattern_width}×${data.pattern_height}</div>`;
+    }
     document.getElementById('statsBar').innerHTML = `
         <div class="stat stat-pct">${s.completion_pct}% 完成</div>
         <div class="stat stat-correct">${s.correct} 正确</div>
         <div class="stat stat-wrong">${s.wrong} 错色</div>
         <div class="stat stat-missing">${s.missing} 未拼</div>
+        ${posInfo}
     `;
 }
 

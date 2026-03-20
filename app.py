@@ -236,65 +236,158 @@ def image_to_pattern(image_bytes, width=100, height=100, brand="mard",
 
 
 # --- Board comparison ---
-def compare_board(photo_bytes, corners, pattern_data):
+
+# Precompute bead Lab values for matching
+_bead_lab_flat = _bead_lab.copy()  # (N_BEADS, 3) in Lab
+
+
+def _sample_grid(warped, grid_w, grid_h, cell_px):
+    """Sample average color for each cell in the warped image. Returns (grid_h, grid_w, 3) uint8."""
+    margin = int(cell_px * 0.2)
+    sampled = np.empty((grid_h, grid_w, 3), dtype=np.uint8)
+    for y in range(grid_h):
+        for x in range(grid_w):
+            x0 = x * cell_px + margin
+            y0 = y * cell_px + margin
+            x1 = (x + 1) * cell_px - margin
+            y1 = (y + 1) * cell_px - margin
+            sampled[y, x] = warped[y0:y1, x0:x1].mean(axis=(0, 1)).astype(np.uint8)
+    return sampled
+
+
+def _white_balance(sampled, empty_threshold=240):
+    """Auto white-balance using bright (empty) cells as white reference."""
+    brightness = (sampled[:, :, 0].astype(int) * 299 +
+                  sampled[:, :, 1].astype(int) * 587 +
+                  sampled[:, :, 2].astype(int) * 114) // 1000
+    bright_mask = brightness > empty_threshold
+    if bright_mask.sum() < 3:
+        # Not enough empty cells — try using the top 10% brightest
+        threshold = np.percentile(brightness, 90)
+        bright_mask = brightness > threshold
+    if bright_mask.sum() < 1:
+        return sampled  # can't calibrate
+
+    ref_white = sampled[bright_mask].mean(axis=0).astype(np.float64)
+    # Avoid division by zero
+    ref_white = np.maximum(ref_white, 1.0)
+    scale = 255.0 / ref_white
+    # Clamp scale to avoid extreme corrections
+    scale = np.clip(scale, 0.5, 2.0)
+    corrected = np.clip(sampled.astype(np.float64) * scale, 0, 255).astype(np.uint8)
+    return corrected
+
+
+def _build_ref_index_grid(pattern_data):
+    """Convert pattern data to a 2D array of bead color indices."""
+    ph, pw = pattern_data["height"], pattern_data["width"]
+    # Map hex -> index
+    hex_to_idx = {c[0]: i for i, c in enumerate(COLORS)}
+    grid = np.empty((ph, pw), dtype=np.int32)
+    for y in range(ph):
+        for x in range(pw):
+            h = pattern_data["pattern"][y][x]["color"]
+            grid[y, x] = hex_to_idx.get(h, 0)
+    return grid
+
+
+def _auto_align(query_indices, ref_indices):
+    """Find best (dy, dx) offset of query within reference using soft Lab distance.
+
+    Returns (best_dy, best_dx, best_score).
+    """
+    qh, qw = query_indices.shape
+    rh, rw = ref_indices.shape
+    if qh > rh or qw > rw:
+        return 0, 0, float('inf')
+
+    # Precompute Lab values
+    query_lab = _bead_lab_flat[query_indices]  # (qh, qw, 3)
+    ref_lab = _bead_lab_flat[ref_indices]      # (rh, rw, 3)
+
+    best_score = float('inf')
+    best_dy, best_dx = 0, 0
+
+    for dy in range(rh - qh + 1):
+        for dx in range(rw - qw + 1):
+            window = ref_lab[dy:dy + qh, dx:dx + qw]  # (qh, qw, 3)
+            diff = window - query_lab
+            score = float(np.sum(diff * diff))  # sum of squared Lab distances
+            if score < best_score:
+                best_score = score
+                best_dy, best_dx = dy, dx
+
+    return best_dy, best_dx, best_score
+
+
+def compare_board(photo_bytes, corners, pattern_data, grid_w=None, grid_h=None):
     """Compare a photo of a physical bead board against the expected pattern.
 
     corners: [[x1,y1],[x2,y2],[x3,y3],[x4,y4]] in photo pixel coords (TL, TR, BR, BL)
+    grid_w, grid_h: number of beads in the photo (if None, assume full pattern)
     """
     pw, ph = pattern_data["width"], pattern_data["height"]
+    # If grid dimensions not specified, assume full pattern
+    if not grid_w:
+        grid_w = pw
+    if not grid_h:
+        grid_h = ph
+    # Clamp to pattern size
+    grid_w = min(grid_w, pw)
+    grid_h = min(grid_h, ph)
+
     brand = pattern_data.get("brand", "mard")
     brand_idx = BRANDS.get(brand, BRANDS["mard"])["index"]
 
-    # Decode photo
+    # Decode & perspective transform
     img_array = np.frombuffer(photo_bytes, dtype=np.uint8)
-    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)  # BGR
+    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-    # Perspective transform: map corners to a rectangle
-    cell_px = 20  # pixels per bead cell in the warped image
-    dst_w, dst_h = pw * cell_px, ph * cell_px
+    cell_px = 20
+    dst_w, dst_h = grid_w * cell_px, grid_h * cell_px
     src_pts = np.array(corners, dtype=np.float32)
     dst_pts = np.array([[0, 0], [dst_w, 0], [dst_w, dst_h], [0, dst_h]], dtype=np.float32)
     M = cv2.getPerspectiveTransform(src_pts, dst_pts)
     warped = cv2.warpPerspective(img_rgb, M, (dst_w, dst_h))
 
-    # Sample each cell: center 60% to avoid grid lines/gaps
-    margin = int(cell_px * 0.2)
+    # Sample & white-balance
+    sampled = _sample_grid(warped, grid_w, grid_h, cell_px)
+    sampled = _white_balance(sampled)
+
+    # Quantize each cell
+    query_indices = _lut_lookup_vectorized(sampled.reshape(-1, 3)).reshape(grid_h, grid_w).astype(np.int32)
+
+    # Auto-align: find best position within the full pattern
+    ref_indices = _build_ref_index_grid(pattern_data)
+
+    if grid_w == pw and grid_h == ph:
+        # Full pattern, no alignment needed
+        offset_y, offset_x = 0, 0
+    else:
+        offset_y, offset_x, _ = _auto_align(query_indices, ref_indices)
+
+    # Compare at the matched position
+    EMPTY_BRIGHTNESS_THRESHOLD = 240
     grid = []
-    total = pw * ph
-    correct = 0
-    wrong = 0
-    missing = 0
+    correct = wrong = missing = 0
+    total = grid_h * grid_w
 
-    # Detect "empty" by checking if color is very close to board base color
-    # We'll use a simple brightness threshold for "empty/transparent" base
-    EMPTY_BRIGHTNESS_THRESHOLD = 240  # very bright = likely empty white base
-
-    for y in range(ph):
+    for y in range(grid_h):
         row = []
-        for x in range(pw):
-            x0 = x * cell_px + margin
-            y0 = y * cell_px + margin
-            x1 = (x + 1) * cell_px - margin
-            y1 = (y + 1) * cell_px - margin
-            cell = warped[y0:y1, x0:x1]
-            avg_color = cell.mean(axis=(0, 1)).astype(np.uint8)
-
-            # Check if empty
-            brightness = int(avg_color[0]) * 299 + int(avg_color[1]) * 587 + int(avg_color[2]) * 114
-            brightness //= 1000
-
-            expected = pattern_data["pattern"][y][x]
+        for x in range(grid_w):
+            ry, rx = offset_y + y, offset_x + x
+            expected = pattern_data["pattern"][ry][rx]
+            avg = sampled[y, x]
+            brightness = (int(avg[0]) * 299 + int(avg[1]) * 587 + int(avg[2]) * 114) // 1000
 
             if brightness > EMPTY_BRIGHTNESS_THRESHOLD:
-                # Likely empty
                 status = "missing"
                 missing += 1
                 actual_code = ""
                 actual_hex = ""
             else:
-                # Match to nearest bead color
-                idx = _lut_lookup(avg_color[0], avg_color[1], avg_color[2])
+                idx = int(query_indices[y, x])
                 entry = COLORS[idx]
                 actual_code = entry[brand_idx]
                 actual_hex = entry[0]
@@ -316,8 +409,12 @@ def compare_board(photo_bytes, corners, pattern_data):
 
     return {
         "grid": grid,
-        "width": pw,
-        "height": ph,
+        "width": grid_w,
+        "height": grid_h,
+        "offset_x": offset_x,
+        "offset_y": offset_y,
+        "pattern_width": pw,
+        "pattern_height": ph,
         "stats": {
             "total": total,
             "correct": correct,
@@ -410,8 +507,11 @@ def compare():
     else:
         return jsonify({"error": "No pattern_id or pattern_data provided"}), 400
 
+    grid_w = request.form.get("grid_w", type=int)
+    grid_h = request.form.get("grid_h", type=int)
+
     photo_bytes = request.files["photo"].read()
-    result = compare_board(photo_bytes, corners, pattern_data)
+    result = compare_board(photo_bytes, corners, pattern_data, grid_w, grid_h)
     return jsonify(result)
 
 
