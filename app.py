@@ -209,7 +209,23 @@ def image_to_pattern(image_bytes, width=100, height=100, brand="mard",
     img = Image.alpha_composite(bg, img).convert("RGB")
     brand_idx = BRANDS.get(brand, BRANDS["mard"])["index"]
 
-    if mode == "classic":
+    if mode == "pixeloe":
+        # PixelOE: contrast-aware outline expansion + adaptive downsampling
+        import torch
+        from pixeloe.torch.pixelize import pixelize as pixelize_torch
+        from pixeloe.torch.utils import pre_resize, to_numpy
+        target_size = max(width, height)
+        patch_size = 4
+        img_t = pre_resize(img, target_size=target_size, patch_size=patch_size)
+        with torch.no_grad():
+            result_t = pixelize_torch(img_t, pixel_size=patch_size, thickness=2,
+                                      do_quant=False, no_post_upscale=True)
+        pixeloe_img = Image.fromarray(to_numpy(result_t)[0])
+        # Resize to exact target dimensions (PixelOE output may differ slightly)
+        pixeloe_img = pixeloe_img.resize((width, height), Image.NEAREST)
+        pixels = np.array(pixeloe_img)
+        idx_grid = _lut_lookup_vectorized(pixels.reshape(-1, 3)).reshape(height, width)
+    elif mode == "classic":
         # Lanczos preserves sharp edges/thin lines; RGB LUT for fast matching
         img = img.resize((width, height), Image.LANCZOS)
         pixels = np.array(img)
@@ -471,7 +487,7 @@ def generate():
     if dither not in ("none", "floyd-steinberg", "ordered"):
         dither = "none"
     mode = request.form.get("mode", "ciede2000")
-    if mode not in ("ciede2000", "classic"):
+    if mode not in ("ciede2000", "classic", "pixeloe"):
         mode = "ciede2000"
 
     image_bytes = file.read()
