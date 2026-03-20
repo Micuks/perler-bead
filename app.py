@@ -4,7 +4,7 @@
 import io
 import time
 from flask import Flask, request, jsonify, send_from_directory
-from PIL import Image, ImageFilter
+from PIL import Image
 import numpy as np
 from skimage.color import rgb2lab, deltaE_ciede2000
 from colors import BRANDS, COLORS, COLOR_RGB
@@ -125,28 +125,50 @@ def _ordered_dither(pixels):
     return np.clip(buf, 0, 255).astype(np.uint8)
 
 
+def _majority_vote_downsample(bead_indices_hi, width, height, scale):
+    """Downsample a high-res bead index map by majority vote per cell."""
+    hi_h, hi_w = bead_indices_hi.shape
+    # Reshape into (height, scale, width, scale) blocks, then flatten each block
+    # Trim to exact multiple of scale
+    trimmed = bead_indices_hi[:height * scale, :width * scale]
+    blocks = trimmed.reshape(height, scale, width, scale)
+    blocks = blocks.transpose(0, 2, 1, 3).reshape(height, width, scale * scale)
+    # For each block, find the mode (most frequent value)
+    result = np.empty((height, width), dtype=np.int32)
+    for y in range(height):
+        for x in range(width):
+            counts = np.bincount(blocks[y, x].astype(np.intp))
+            result[y, x] = np.argmax(counts)
+    return result
+
+
 def image_to_pattern(image_bytes, width=100, height=100, brand="mard", dither="none"):
     """Convert an uploaded image to a fuse bead pattern."""
     img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
     bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
     img = Image.alpha_composite(bg, img).convert("RGB")
 
-    # Mild sharpen before downscale
-    img = img.filter(ImageFilter.SHARPEN)
-    img = img.resize((width, height), Image.LANCZOS)
-    pixels = np.array(img)
-
     brand_idx = BRANDS.get(brand, BRANDS["mard"])["index"]
 
     if dither == "floyd-steinberg":
+        img = img.resize((width, height), Image.LANCZOS)
+        pixels = np.array(img)
         idx_grid = _floyd_steinberg_dither(pixels, brand_idx)
-    else:
-        if dither == "ordered":
-            pixels = _ordered_dither(pixels)
-        # Vectorized CIEDE2000 LUT lookup
+    elif dither == "ordered":
+        img = img.resize((width, height), Image.LANCZOS)
+        pixels = _ordered_dither(np.array(img))
         flat = pixels.reshape(-1, 3)
-        indices = _lut_lookup_vectorized(flat)
-        idx_grid = indices.reshape(height, width)
+        idx_grid = _lut_lookup_vectorized(flat).reshape(height, width)
+    else:
+        # Supersampled majority-vote: quantize at higher res, then vote
+        SCALE = 4
+        hi_w, hi_h = width * SCALE, height * SCALE
+        img_hi = img.resize((hi_w, hi_h), Image.LANCZOS)
+        pixels_hi = np.array(img_hi)
+        # Quantize every pixel to nearest bead color
+        indices_hi = _lut_lookup_vectorized(pixels_hi.reshape(-1, 3)).reshape(hi_h, hi_w)
+        # Majority vote per bead cell
+        idx_grid = _majority_vote_downsample(indices_hi, width, height, SCALE)
 
     # Build pattern JSON
     pattern = []
