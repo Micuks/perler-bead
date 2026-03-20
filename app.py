@@ -125,21 +125,37 @@ def _ordered_dither(pixels):
     return np.clip(buf, 0, 255).astype(np.uint8)
 
 
-def _majority_vote_downsample(bead_indices_hi, width, height, scale):
-    """Downsample a high-res bead index map by majority vote per cell."""
-    hi_h, hi_w = bead_indices_hi.shape
-    # Reshape into (height, scale, width, scale) blocks, then flatten each block
-    # Trim to exact multiple of scale
-    trimmed = bead_indices_hi[:height * scale, :width * scale]
-    blocks = trimmed.reshape(height, scale, width, scale)
-    blocks = blocks.transpose(0, 2, 1, 3).reshape(height, width, scale * scale)
-    # For each block, find the mode (most frequent value)
-    result = np.empty((height, width), dtype=np.int32)
-    for y in range(height):
-        for x in range(width):
-            counts = np.bincount(blocks[y, x].astype(np.intp))
-            result[y, x] = np.argmax(counts)
-    return result
+def _denoise_isolated(idx_grid):
+    """Remove isolated single-pixel outliers.
+
+    A pixel is "isolated" if 3+ of its 4-connected neighbors share the same
+    color AND that color differs from the pixel itself.  Replace it with the
+    dominant neighbor color.  This cleans edge-bleeding artifacts from Lanczos
+    without destroying intentional small features (eyes, highlights) which are
+    typically 2+ pixels.
+    """
+    h, w = idx_grid.shape
+    out = idx_grid.copy()
+    for y in range(h):
+        for x in range(w):
+            cur = idx_grid[y, x]
+            neighbors = []
+            if y > 0:     neighbors.append(idx_grid[y - 1, x])
+            if y < h - 1: neighbors.append(idx_grid[y + 1, x])
+            if x > 0:     neighbors.append(idx_grid[y, x - 1])
+            if x < w - 1: neighbors.append(idx_grid[y, x + 1])
+            if len(neighbors) < 3:
+                continue
+            # Count how many neighbors share the most common neighbor color
+            counts = {}
+            for n in neighbors:
+                counts[n] = counts.get(n, 0) + 1
+            dominant = max(counts, key=counts.get)
+            # Replace only if current pixel differs from dominant AND
+            # dominant has 3+ votes (strong consensus)
+            if dominant != cur and counts[dominant] >= 3:
+                out[y, x] = dominant
+    return out
 
 
 def image_to_pattern(image_bytes, width=100, height=100, brand="mard", dither="none"):
@@ -160,15 +176,13 @@ def image_to_pattern(image_bytes, width=100, height=100, brand="mard", dither="n
         flat = pixels.reshape(-1, 3)
         idx_grid = _lut_lookup_vectorized(flat).reshape(height, width)
     else:
-        # Supersampled majority-vote: quantize at higher res, then vote
-        SCALE = 4
-        hi_w, hi_h = width * SCALE, height * SCALE
-        img_hi = img.resize((hi_w, hi_h), Image.LANCZOS)
-        pixels_hi = np.array(img_hi)
-        # Quantize every pixel to nearest bead color
-        indices_hi = _lut_lookup_vectorized(pixels_hi.reshape(-1, 3)).reshape(hi_h, hi_w)
-        # Majority vote per bead cell
-        idx_grid = _majority_vote_downsample(indices_hi, width, height, SCALE)
+        # Lanczos resize preserves detail (eyes, highlights, thin lines)
+        img = img.resize((width, height), Image.LANCZOS)
+        pixels = np.array(img)
+        flat = pixels.reshape(-1, 3)
+        idx_grid = _lut_lookup_vectorized(flat).reshape(height, width)
+        # Remove isolated outlier pixels (edge-bleeding artifacts)
+        idx_grid = _denoise_isolated(idx_grid)
 
     # Build pattern JSON
     pattern = []
