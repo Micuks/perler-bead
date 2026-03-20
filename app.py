@@ -170,7 +170,16 @@ def _denoise_isolated(idx_grid):
     return out
 
 
-def image_to_pattern(image_bytes, width=100, height=100, brand="mard", dither="none"):
+def _rgb_nearest(pixels_flat):
+    """Original RGB Euclidean nearest-neighbor matching (vectorized matmul)."""
+    flat = pixels_flat.astype(np.float64)
+    pixel_sq = np.sum(flat ** 2, axis=1, keepdims=True)
+    distances = pixel_sq + _bead_sq - 2 * flat @ BEAD_RGB_FOR_MATMUL.T
+    return np.argmin(distances, axis=1)
+
+
+def image_to_pattern(image_bytes, width=100, height=100, brand="mard",
+                     dither="none", mode="ciede2000"):
     """Convert an uploaded image to a fuse bead pattern."""
     img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
     bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
@@ -178,7 +187,13 @@ def image_to_pattern(image_bytes, width=100, height=100, brand="mard", dither="n
 
     brand_idx = BRANDS.get(brand, BRANDS["mard"])["index"]
 
-    if dither == "floyd-steinberg":
+    if mode == "classic":
+        # Classic pipeline: Lanczos (sharp) + RGB nearest-neighbor, no denoise
+        img = img.resize((width, height), Image.LANCZOS)
+        pixels = np.array(img)
+        flat = pixels.reshape(-1, 3)
+        idx_grid = _rgb_nearest(flat).reshape(height, width)
+    elif dither == "floyd-steinberg":
         img = img.resize((width, height), Image.BOX)
         pixels = np.array(img)
         idx_grid = _floyd_steinberg_dither(pixels, brand_idx)
@@ -188,14 +203,11 @@ def image_to_pattern(image_bytes, width=100, height=100, brand="mard", dither="n
         flat = pixels.reshape(-1, 3)
         idx_grid = _lut_lookup_vectorized(flat).reshape(height, width)
     else:
-        # BOX resize: area-average with no ringing/overshoot artifacts
-        # (Lanczos sinc kernel causes color fringing at edges)
+        # CIEDE2000 pipeline: BOX (no ringing) + perceptual matching + denoise
         img = img.resize((width, height), Image.BOX)
         pixels = np.array(img)
         flat = pixels.reshape(-1, 3)
         idx_grid = _lut_lookup_vectorized(flat).reshape(height, width)
-        # Remove low-contrast isolated outliers (edge-blend artifacts)
-        # High-contrast features (eyes, highlights) are preserved
         idx_grid = _denoise_isolated(idx_grid)
 
     # Build pattern JSON
@@ -242,9 +254,12 @@ def generate():
     dither = request.form.get("dither", "none")
     if dither not in ("none", "floyd-steinberg", "ordered"):
         dither = "none"
+    mode = request.form.get("mode", "ciede2000")
+    if mode not in ("ciede2000", "classic"):
+        mode = "ciede2000"
 
     image_bytes = file.read()
-    result = image_to_pattern(image_bytes, width, height, brand, dither)
+    result = image_to_pattern(image_bytes, width, height, brand, dither, mode)
     return jsonify(result)
 
 

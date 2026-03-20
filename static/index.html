@@ -347,11 +347,18 @@
                 <input type="number" id="heightInput" value="100" min="5" max="200">
             </div>
             <div class="control-group">
-                <label>抖动算法:</label>
+                <label>渲染模式:</label>
+                <select id="modeSelect" style="padding:6px 10px; border:1px solid #ddd; border-radius:6px; font-size:0.9em;">
+                    <option value="ciede2000" selected>感知优化 (CIEDE2000)</option>
+                    <option value="classic">经典 (Lanczos + RGB)</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>抖动:</label>
                 <select id="ditherSelect" style="padding:6px 10px; border:1px solid #ddd; border-radius:6px; font-size:0.9em;">
-                    <option value="none" selected>无抖动 (推荐)</option>
-                    <option value="floyd-steinberg">Floyd-Steinberg (屏幕预览用)</option>
-                    <option value="ordered">有序抖动 (屏幕预览用)</option>
+                    <option value="none" selected>无</option>
+                    <option value="floyd-steinberg">Floyd-Steinberg</option>
+                    <option value="ordered">有序抖动</option>
                 </select>
             </div>
             <div class="control-group">
@@ -722,6 +729,7 @@
         fd.append('width', widthInput.value);
         fd.append('height', heightInput.value);
         fd.append('brand', document.getElementById('brandSelect').value);
+        fd.append('mode', document.getElementById('modeSelect').value);
         fd.append('dither', document.getElementById('ditherSelect').value);
 
         try {
