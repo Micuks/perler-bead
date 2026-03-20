@@ -145,8 +145,15 @@
 
     <!-- Loading -->
     <div class="loading hidden" id="loading">
-        <div class="spinner"></div>
-        <p style="margin-top:10px;">正在对比分析...</p>
+        <div style="width:100%; max-width:400px; margin:0 auto;">
+            <div style="display:flex; justify-content:space-between; font-size:0.85em; color:#888; margin-bottom:6px;">
+                <span id="loadingText">正在上传照片...</span>
+                <span id="loadingPct">0%</span>
+            </div>
+            <div style="height:6px; background:#eee; border-radius:3px; overflow:hidden;">
+                <div id="loadingBar" style="height:100%; background:#333; border-radius:3px; width:0%; transition:width 0.3s;"></div>
+            </div>
+        </div>
     </div>
 
     <!-- Step 3: Results -->
@@ -189,11 +196,23 @@ let corners = [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]];
 let compareResult = null;
 let activeFilter = 'all';
 
-// Load from URL params
+// Auto-load from URL params
 const urlParams = new URLSearchParams(window.location.search);
 if (urlParams.get('id')) {
     patternIdInput.value = urlParams.get('id');
-    loadPatternBtn.click();
+    // Auto-load immediately
+    (async () => {
+        const pid = urlParams.get('id');
+        patternStatus.textContent = '加载中...'; patternStatus.className = 'status-msg';
+        const res = await fetch(`/api/pattern/${encodeURIComponent(pid)}`);
+        if (!res.ok) {
+            patternStatus.textContent = '图纸不存在或已过期'; patternStatus.className = 'status-msg status-err'; return;
+        }
+        patternData = await res.json();
+        patternStatus.textContent = `已加载 (${patternData.width}×${patternData.height})`;
+        patternStatus.className = 'status-msg status-ok';
+        step2.classList.remove('hidden');
+    })();
 }
 
 // Step 1: Load pattern
@@ -336,6 +355,16 @@ compareBtn.addEventListener('click', async () => {
     loading.classList.remove('hidden');
     step3.classList.add('hidden');
 
+    const loadingText = document.getElementById('loadingText');
+    const loadingPct = document.getElementById('loadingPct');
+    const loadingBar = document.getElementById('loadingBar');
+    const setProgress = (pct, text) => {
+        loadingBar.style.width = pct + '%';
+        loadingPct.textContent = Math.round(pct) + '%';
+        if (text) loadingText.textContent = text;
+    };
+    setProgress(0, '正在上传照片...');
+
     // Convert corner fractions to pixel coords in original image
     const img = new Image();
     img.src = URL.createObjectURL(photoFile);
@@ -350,25 +379,48 @@ compareBtn.addEventListener('click', async () => {
     fd.append('corners', JSON.stringify(pixelCorners));
     fd.append('pattern_id', patternData.pattern_id);
 
-    let res;
     try {
-        res = await fetch('/api/compare', { method: 'POST', body: fd });
+        const data = await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/compare');
+            xhr.upload.onprogress = e => {
+                if (e.lengthComputable) setProgress(e.loaded / e.total * 50, '正在上传照片...');
+            };
+            xhr.upload.onload = () => setProgress(55, '正在分析对比...');
+            let fakeTimer;
+            let fakePct = 55;
+            xhr.upload.onload = () => {
+                setProgress(55, '正在分析对比...');
+                fakePct = 55;
+                fakeTimer = setInterval(() => {
+                    if (fakePct < 90) { fakePct += Math.random() * 8; setProgress(Math.min(fakePct, 90), '正在分析对比...'); }
+                    else clearInterval(fakeTimer);
+                }, 200);
+            };
+            xhr.onload = () => {
+                clearInterval(fakeTimer);
+                setProgress(100, '完成');
+                if (xhr.status !== 200) {
+                    let msg = '对比失败 (' + xhr.status + ')';
+                    if (xhr.status === 413) msg = '照片太大，请压缩后重试';
+                    else if (xhr.status === 502 || xhr.status === 504) msg = '服务暂时不可用，请稍后重试';
+                    reject(new Error(msg)); return;
+                }
+                resolve(JSON.parse(xhr.responseText));
+            };
+            xhr.onerror = () => { clearInterval(fakeTimer); reject(new Error('网络错误，请重试')); };
+            xhr.send(fd);
+        });
+        loading.classList.add('hidden');
+        if (data.error) { alert(data.error); return; }
+        compareResult = data;
+        renderResult();
+        step3.classList.remove('hidden');
+        requestAnimationFrame(rZoomFit);
     } catch (e) {
         loading.classList.add('hidden');
-        alert('网络错误，请重试'); return;
+        alert(e.message);
     }
-    loading.classList.add('hidden');
-    if (!res.ok) {
-        let msg = '对比失败 (' + res.status + ')';
-        if (res.status === 413) msg = '照片太大，请压缩后重试';
-        else if (res.status === 502 || res.status === 504) msg = '服务暂时不可用，请稍后重试';
-        alert(msg); return;
-    }
-    compareResult = await res.json();
-    if (compareResult.error) { alert(compareResult.error); return; }
-    renderResult();
-    step3.classList.remove('hidden');
-    requestAnimationFrame(rZoomFit);
 });
 
 // Result rendering

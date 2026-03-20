@@ -396,8 +396,15 @@
         </div>
 
         <div class="loading hidden" id="loading">
-            <div class="spinner"></div>
-            <p style="margin-top:12px;">正在生成拼豆图纸...</p>
+            <div style="width:100%; max-width:400px; margin:0 auto;">
+                <div style="display:flex; justify-content:space-between; font-size:0.85em; color:#888; margin-bottom:6px;">
+                    <span id="loadingText">正在上传...</span>
+                    <span id="loadingPct">0%</span>
+                </div>
+                <div style="height:6px; background:#eee; border-radius:3px; overflow:hidden;">
+                    <div id="loadingBar" style="height:100%; background:#333; border-radius:3px; width:0%; transition:width 0.3s;"></div>
+                </div>
+            </div>
         </div>
 
         <div class="hidden" id="resultSection">
@@ -734,20 +741,48 @@
         fd.append('mode', document.getElementById('modeSelect').value);
         fd.append('dither', document.getElementById('ditherSelect').value);
 
+        const loadingText = document.getElementById('loadingText');
+        const loadingPct = document.getElementById('loadingPct');
+        const loadingBar = document.getElementById('loadingBar');
+        const setProgress = (pct, text) => {
+            loadingBar.style.width = pct + '%';
+            loadingPct.textContent = Math.round(pct) + '%';
+            if (text) loadingText.textContent = text;
+        };
+        setProgress(0, '正在上传...');
+
         try {
-            const res = await fetch('/api/generate', { method: 'POST', body: fd });
-            if (!res.ok) {
-                const text = await res.text();
-                alert('服务器错误 (' + res.status + ')'); return;
-            }
-            const data = await res.json();
+            const data = await new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', '/api/generate');
+                xhr.upload.onprogress = e => {
+                    if (e.lengthComputable) setProgress(e.loaded / e.total * 50, '正在上传...');
+                };
+                xhr.upload.onload = () => setProgress(55, '正在生成图纸...');
+                xhr.onload = () => {
+                    setProgress(100, '完成');
+                    if (xhr.status !== 200) { reject(new Error('服务器错误 (' + xhr.status + ')')); return; }
+                    resolve(JSON.parse(xhr.responseText));
+                };
+                xhr.onerror = () => reject(new Error('网络错误'));
+                xhr.send(fd);
+                // Simulate processing progress after upload completes
+                let fakePct = 55;
+                const timer = setInterval(() => {
+                    if (fakePct < 90) { fakePct += Math.random() * 8; setProgress(Math.min(fakePct, 90), '正在生成图纸...'); }
+                    else clearInterval(timer);
+                }, 200);
+                xhr.onload = () => { clearInterval(timer); setProgress(100, '完成');
+                    if (xhr.status !== 200) { reject(new Error('服务器错误 (' + xhr.status + ')')); return; }
+                    resolve(JSON.parse(xhr.responseText));
+                };
+            });
             if (data.error) { alert(data.error); return; }
             currentPattern = data;
             drawPattern(data);
             renderColorTable(data);
             resultSection.classList.remove('hidden');
             requestAnimationFrame(zoomFit);
-            // Show pattern ID and compare link
             if (data.pattern_id) {
                 document.getElementById('patternIdDisplay').textContent = 'ID: ' + data.pattern_id;
                 const link = document.getElementById('compareLink');
