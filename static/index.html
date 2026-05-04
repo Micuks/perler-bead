@@ -317,7 +317,7 @@
     <div class="container">
         <header>
             <h1>拼豆图纸生成器</h1>
-            <p class="subtitle">CIEDE2000 感知色彩匹配 · 支持抖动算法 · <a href="/colors" target="_blank" style="color:#888;">色号对照表</a></p>
+            <p class="subtitle">Gerstner 感知像素化 · 联合下采样与色彩量化 · 支持抖动 · <a href="/colors" target="_blank" style="color:#888;">色号对照表</a></p>
         </header>
 
         <div class="upload-area" id="uploadArea">
@@ -348,8 +348,8 @@
             </div>
             <div class="control-group">
                 <label>渲染模式:</label>
-                <select id="modeSelect" style="padding:6px 10px; border:1px solid #ddd; border-radius:6px; font-size:0.9em;" title="感知优化：CIEDE2000 色差匹配，色准最好&#10;经典：Lanczos 锐化，细节保留好&#10;像素风格化：PixelOE 轮廓强化，适合卡通/简笔画">
-                    <option value="ciede2000" selected>感知优化 (推荐)</option>
+                <select id="modeSelect" style="padding:6px 10px; border:1px solid #ddd; border-radius:6px; font-size:0.9em;" title="感知优化：Gerstner 联合 EM 优化，消除边界伪色（推荐）&#10;经典：Lanczos 锐化，细节保留好&#10;像素风格化：PixelOE 轮廓强化，适合卡通/简笔画">
+                    <option value="perceptual" selected>感知优化 (推荐)</option>
                     <option value="classic">经典 (细节优先)</option>
                     <option value="pixeloe">像素风格化 (PixelOE, 较慢)</option>
                 </select>

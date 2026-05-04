@@ -14,6 +14,7 @@ import numpy as np
 import cv2
 from skimage.color import rgb2lab, deltaE_ciede2000
 from colors import BRANDS, COLORS, COLOR_RGB
+from pixelize import perceptual_pixelize, floyd_steinberg_lab
 
 app = Flask(__name__, static_folder="static")
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20MB (photos can be large)
@@ -135,28 +136,6 @@ def _rgb_lut_lookup_vectorized(pixels_flat):
     return RGB_LUT[lut_indices]
 
 
-def _floyd_steinberg_dither(pixels, brand_idx):
-    h, w = pixels.shape[:2]
-    buf = pixels.astype(np.float64)
-    result = np.empty((h, w), dtype=np.int32)
-    for y in range(h):
-        for x in range(w):
-            old = np.clip(buf[y, x], 0, 255)
-            idx = _lut_lookup(old[0], old[1], old[2])
-            result[y, x] = idx
-            bead_rgb = BEAD_RGB_NP[idx]
-            err = old - bead_rgb
-            if x + 1 < w:
-                buf[y, x + 1] += err * (7 / 16)
-            if y + 1 < h:
-                if x > 0:
-                    buf[y + 1, x - 1] += err * (3 / 16)
-                buf[y + 1, x] += err * (5 / 16)
-                if x + 1 < w:
-                    buf[y + 1, x + 1] += err * (1 / 16)
-    return result
-
-
 BAYER_4 = np.array([
     [0, 8, 2, 10], [12, 4, 14, 6],
     [3, 11, 1, 9], [15, 7, 13, 5],
@@ -231,25 +210,19 @@ def image_to_pattern(image_bytes, width=100, height=100, brand="mard",
         pixels = np.array(img)
         idx_grid = _rgb_lut_lookup_vectorized(pixels.reshape(-1, 3)).reshape(height, width)
     elif dither == "floyd-steinberg":
-        img = img.resize((width, height), Image.BOX)
-        idx_grid = _floyd_steinberg_dither(np.array(img), brand_idx)
+        idx_grid = floyd_steinberg_lab(np.array(img), width, height,
+                                       bead_lab=_bead_lab).astype(np.int32)
     elif dither == "ordered":
         img = img.resize((width, height), Image.BOX)
         pixels = _ordered_dither(np.array(img))
         idx_grid = _lut_lookup_vectorized(pixels.reshape(-1, 3)).reshape(height, width)
     else:
-        # Edge-aware pipeline: resize to 4x → bilateral filter → BOX to target → CIEDE2000
-        # Bilateral at 4x target resolution is fast and effective: smooths within-region
-        # noise while preserving edges, so BOX resize produces fewer mixed colors.
-        mid_w, mid_h = width * 4, height * 4
-        img_mid = img.resize((mid_w, mid_h), Image.BOX)
-        pixels_bgr = cv2.cvtColor(np.array(img_mid), cv2.COLOR_RGB2BGR)
-        filtered_bgr = cv2.bilateralFilter(pixels_bgr, d=9, sigmaColor=75, sigmaSpace=75)
-        filtered_rgb = cv2.cvtColor(filtered_bgr, cv2.COLOR_BGR2RGB)
-        img_filtered = Image.fromarray(filtered_rgb)
-        img_final = img_filtered.resize((width, height), Image.BOX)
-        pixels = np.array(img_final)
-        idx_grid = _lut_lookup_vectorized(pixels.reshape(-1, 3)).reshape(height, width)
+        # Gerstner 2012 perceptual pixelization: joint EM over superpixel assignment
+        # and soft palette commitment, saliency-weighted. Eliminates boundary 伪色.
+        idx_grid = perceptual_pixelize(np.array(img), width, height,
+                                       bead_lab=_bead_lab,
+                                       lut=CIEDE2000_LUT,
+                                       lut_bits=LUT_BITS).astype(np.int32)
 
     pattern = []
     color_counts = {}
@@ -494,9 +467,9 @@ def generate():
     dither = request.form.get("dither", "none")
     if dither not in ("none", "floyd-steinberg", "ordered"):
         dither = "none"
-    mode = request.form.get("mode", "ciede2000")
-    if mode not in ("ciede2000", "classic", "pixeloe"):
-        mode = "ciede2000"
+    mode = request.form.get("mode", "perceptual")
+    if mode not in ("perceptual", "classic", "pixeloe"):
+        mode = "perceptual"
 
     image_bytes = file.read()
     result = image_to_pattern(image_bytes, width, height, brand, dither, mode)
